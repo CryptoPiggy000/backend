@@ -1,0 +1,18 @@
+{
+  "name": "cryptopiggy-backend",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Public Cloudflare Worker: thin CORS proxy in front of the private engine. Holds no key.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "hono": "^4.6.14"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260706.1",
+    "typescript": "^5.7.2",
+    "wrangler": "^4.108.0"
+  }
+}

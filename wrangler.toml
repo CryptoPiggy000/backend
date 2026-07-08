@@ -1,0 +1,14 @@
+name = "cryptopiggy-backend"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+
+# The public edge. It holds no key and no store — it only forwards to the private engine and adds CORS.
+# PROD: the engine has no public route; reach it via a service binding (uncomment) so it stays private.
+# [[services]]
+# binding = "ENGINE"
+# service = "cryptopiggy-engine"
+
+[vars]
+# DEV: the engine runs on its own `wrangler dev` port; forward there. PROD swaps this for the binding above.
+ENGINE_URL = "http://127.0.0.1:8788"
+CORS_ORIGIN = "*"
