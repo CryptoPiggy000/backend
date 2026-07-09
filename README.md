@@ -13,10 +13,17 @@ client → backend (public CORS proxy, this) → engine (private Worker) → Pla
 
 ```shell
 npm install
-npx wrangler dev --port 8789    # http://localhost:8789, forwards to ENGINE_URL (default 127.0.0.1:8788)
+npx wrangler dev --port 8789    # http://localhost:8789
 ```
 
-Needs the engine running (`cd ../engine && npx wrangler dev --port 8788`).
+By default (`MOCK = "true"` in `wrangler.toml`) this serves an **in-repo mock engine**
+(`src/mock.ts`) that implements the [`web/API.md`](https://github.com/CryptoPiggy000/web/blob/main/API.md)
+contract in-memory — so the frontend has a real backend to hit **before the private engine exists**.
+Point the app's `NEXT_PUBLIC_API_URL` at `http://localhost:8789`.
+
+To proxy to the **real engine** instead: set `MOCK = "false"` and run the engine
+(`cd ../engine && npx wrangler dev --port 8788`), or bind `ENGINE` in prod. When the engine is
+bound/reachable the mock is bypassed and this stays a pure proxy.
 
 Config in `wrangler.toml` `[vars]`:
 

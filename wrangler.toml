@@ -12,3 +12,6 @@ compatibility_date = "2024-11-01"
 # DEV: the engine runs on its own `wrangler dev` port; forward there. PROD swaps this for the binding above.
 ENGINE_URL = "http://127.0.0.1:8788"
 CORS_ORIGIN = "*"
+# DEV: "true" serves the in-repo mock engine (src/mock.ts) so the frontend has a real backend to hit
+# before the private engine exists. Set to "false" (or bind ENGINE) to proxy to the real engine.
+MOCK = "true"

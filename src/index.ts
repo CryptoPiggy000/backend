@@ -2,11 +2,13 @@
 // it only adds CORS and forwards every request to the private engine, which does the real work.
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { mockApp } from "./mock";
 
 interface Env {
   ENGINE_URL: string;   // DEV: engine's wrangler dev URL
   ENGINE?: Fetcher;     // PROD: private service binding (keeps the engine off the public internet)
   CORS_ORIGIN: string;
+  MOCK?: string;        // DEV: "true" → serve the in-repo mock engine (no real engine yet)
 }
 
 const app = new Hono<{ Bindings: Env }>();
@@ -14,6 +16,11 @@ const app = new Hono<{ Bindings: Env }>();
 app.use("*", (c, next) => cors({ origin: c.env.CORS_ORIGIN || "*" })(c, next));
 
 app.all("*", async (c) => {
+  // No real engine yet? Serve the in-repo mock so the frontend can integrate (see mock.ts).
+  // The moment ENGINE is bound (prod) or MOCK isn't "true", we go back to a pure proxy.
+  if (!c.env.ENGINE && c.env.MOCK === "true") {
+    return mockApp.fetch(c.req.raw, c.env);
+  }
   const url = new URL(c.req.url);
   const method = c.req.method;
   const body = method === "GET" || method === "HEAD" ? undefined : await c.req.arrayBuffer();
