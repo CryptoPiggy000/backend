@@ -35,14 +35,18 @@ Config in `wrangler.toml` `[vars]`:
 ## API
 
 Transparent proxy — every path is forwarded to the engine unchanged, so the contract is the engine's
-(`../engine/README.md`). **The canonical API contract the engine must implement is
-[`web/API.md`](https://github.com/CryptoPiggy000/web/blob/main/API.md)** — auth, `/me/portfolio`
-(two-bucket Resting/Earning), the `/operations/*` build→sign→submit model with sponsored UserOps,
-`/onramp/*`, and `/me/activity`. `web/FLOW.md` is the UX-level flow only; on any conflict, **API.md wins**.
+(`../engine/README.md`). **The canonical API contract is
+[`web/API.md`](https://github.com/CryptoPiggy000/web/blob/main/API.md)** — read its design principle:
+**the engine only *suggests* an allocation; it never moves funds and the app runs full without it.** The
+core money loop is client ↔ contracts (the user builds the `Action[]` and signs `executePlan` directly).
+So the engine's real jobs are **`GET /market/strategies` (suggest)** + enrichment (`/me/portfolio`,
+`/me/activity`, APY) + the **fiat on-ramp** (`/onramp/*`, the one part that genuinely needs the server).
+The `/operations/*` build→sign→submit endpoints are an **optional assist** (pre-build a sponsored op when
+routing/`minOut`/rebalancing needs smarts). `web/FLOW.md` is UX-level only; on conflict, **API.md wins**.
 
-Note the engine must forward `Authorization` and `Idempotency-Key` (this proxy already preserves them),
-and build `/operations/withdraw` as withdraw-to-owner + ERC-20 transfer batched in one UserOp when the
-destination isn't the owner (the on-chain `SmartInvestmentAccount.withdraw` sends to owner only).
+If the engine does offer the `/operations/*` assist: forward `Authorization` + `Idempotency-Key` (this
+proxy preserves them), and build `/operations/withdraw` as withdraw-to-owner + ERC-20 transfer batched in
+one UserOp when the destination isn't the owner (on-chain `SmartInvestmentAccount.withdraw` → owner only).
 
 The backend only adds CORS and strips hop-by-hop headers so bodies aren't double-encoded. Public-facing
 concerns (rate-limiting, WAF, multi-client keys) attach here later; the intelligence stays private in the engine.
