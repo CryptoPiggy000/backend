@@ -34,7 +34,17 @@ Config in `wrangler.toml` `[vars]`:
 
 ## API
 
-Transparent proxy — every path is forwarded to the engine unchanged, so the contract is the engine's
+**Engine-backed `/market/*` (suggestion-only).** The private engine speaks `/plan`, not `web/API.md`, so
+two paths are mapped here (`src/engine.ts`) rather than blind-proxied:
+- `GET /market/strategies?term=` → calls the planner `/plan` at 3 risk presets (safe/balanced/bold) →
+  the chooser shape (savings/crypto split, steady yield, expected return + downside/upside range, named mix).
+- `POST /market/plan` `{ strategy|risk, amount, term, holdings? }` → the planner `/plan` → the full
+  `{ allocation, actions, summary, reasoning }` for the app's **View plan** detail.
+
+They hit the planner via `PLANNER_URL` (dev) or a `PLANNER` service binding (prod), and fall back to the
+mock if the engine is unreachable. Everything else is still forwarded/mocked.
+
+Transparent proxy — every other path is forwarded to the engine unchanged, so the contract is the engine's
 (`../engine/README.md`). **The canonical API contract is
 [`web/API.md`](https://github.com/CryptoPiggy000/web/blob/main/API.md)** — read its design principle:
 **the engine only *suggests* an allocation; it never moves funds and the app runs full without it.** The
