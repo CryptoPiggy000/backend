@@ -10,11 +10,12 @@ export interface PlannerEnv {
 const VALID_TERMS = ["1m", "3m", "6m", "1y"];
 export const asTerm = (t: unknown): string => (VALID_TERMS.includes(t as string) ? (t as string) : "1y");
 
-// The 3 chooser presets → engine risk dial. Green (all savings) → red (~50% crypto).
+// The 3 chooser presets → engine risk dial. Green (all savings) → red (~50% crypto). Ids match the
+// frontend's STRATEGY_ID (safe/balanced/growth); "growth" is now crypto-inclusive, labelled "Bold".
 export const PRESETS = [
   { id: "safe", label: "Safe", risk: 0.1 },
   { id: "balanced", label: "Balanced", risk: 0.5 },
-  { id: "bold", label: "Bold", risk: 0.9 },
+  { id: "growth", label: "Bold", risk: 0.9 },
 ];
 export const PRESET_RISK: Record<string, number> = Object.fromEntries(PRESETS.map((p) => [p.id, p.risk]));
 
