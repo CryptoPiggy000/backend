@@ -2,15 +2,20 @@ name = "cryptopiggy-backend"
 main = "src/index.ts"
 compatibility_date = "2024-11-01"
 
-# The public edge. It holds no key and no store — it only forwards to the private engine and adds CORS.
-# PROD: the engine has no public route; reach it via a service binding (uncomment) so it stays private.
+# The public edge. It holds no key and no store — it forwards to the private engine, adds CORS, and maps
+# the engine's SUGGESTION-ONLY /market/* endpoints (planner /plan → chooser strategies + View-plan detail).
+# PROD: the engine has no public route; reach it via service bindings (uncomment) so it stays private.
 # [[services]]
 # binding = "ENGINE"
 # service = "cryptopiggy-engine"
+# [[services]]
+# binding = "PLANNER"           # the engine's planner (the app's /market/* calls it)
+# service = "cryptopiggy-planner"
 
 [vars]
-# DEV: the engine runs on its own `wrangler dev` port; forward there. PROD swaps this for the binding above.
+# DEV: the engine runs on its own `wrangler dev` ports; forward there. PROD swaps these for the bindings above.
 ENGINE_URL = "http://127.0.0.1:8788"
+PLANNER_URL = "http://127.0.0.1:8791"   # the engine planner (dev); the app's /market/* endpoints call it
 CORS_ORIGIN = "*"
 # DEV: "true" serves the in-repo mock engine (src/mock.ts) so the frontend has a real backend to hit
 # before the private engine exists. Set to "false" (or bind ENGINE) to proxy to the real engine.
