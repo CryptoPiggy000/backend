@@ -20,3 +20,15 @@ CORS_ORIGIN = "*"
 # DEV: "true" serves the in-repo mock engine (src/mock.ts) so the frontend has a real backend to hit
 # before the private engine exists. Set to "false" (or bind ENGINE) to proxy to the real engine.
 MOCK = "true"
+
+# --- production: `wrangler deploy --env production`. Reach the PRIVATE planner (no public URL) via a
+#     service binding, so the app's /market/* calls the real v2 engine over the wire. The residual
+#     routes (/me/portfolio, /operations/*) stay on the mock — the old single-engine was never built and
+#     the real app executes CLIENT-side; MOCK=true is only the fallback here. ---
+[[env.production.services]]
+binding = "PLANNER" # → cryptopiggy-planner-production (private)
+service = "cryptopiggy-planner-production"
+
+[env.production.vars]
+CORS_ORIGIN = "*" # public suggestion-only market data; tighten to the web origin once it's deployed
+MOCK = "true"
