@@ -9,6 +9,16 @@ hiding — the moat lives in the engine.
 client → backend (public CORS proxy, this) → engine (private Worker) → Plan + Actions
 ```
 
+## Live (production)
+
+Deployed: **`https://cryptopiggy-backend-production.ai-suggestion.workers.dev`** — the public edge for
+the app's `/market/*` (chooser strategies + View-plan detail). In production it reaches the **private**
+engine planner via a service binding (`[[env.production.services]] PLANNER → cryptopiggy-planner-production`),
+so the engine stays off the public internet. Verified end-to-end on real Base (a Bold `/market/plan`
+returns ~55% savings / 45% crypto). `MOCK=true` remains only as a fallback for the residual routes
+(`/me/portfolio`, `/operations/*` — the old single-engine was never built; the real app executes
+client-side). Deploy: `wrangler deploy --env production`.
+
 ## Run (local dev)
 
 ```shell
