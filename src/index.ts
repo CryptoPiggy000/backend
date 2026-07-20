@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { mockApp } from "./mock";
 import { callPlanner, toStrategy, asTerm, PRESETS, PRESET_RISK, NOMINAL_TOWORK } from "./engine";
+import { bestQuote } from "./aggregators";
 
 interface Env {
   ENGINE_URL: string;   // DEV: engine's wrangler dev URL
@@ -12,6 +13,8 @@ interface Env {
   PLANNER?: Fetcher;    // PROD: private service binding to cryptopiggy-planner
   CORS_ORIGIN: string;
   MOCK?: string;        // DEV: "true" → serve the in-repo mock engine (no real engine yet)
+  ZEROX_API_KEY?: string;   // 0x Swap API v2 key (secret) — for /market/quote
+  KYBER_CLIENT_ID?: string; // KyberSwap client id (rate-limit identifier)
 }
 
 const app = new Hono<{ Bindings: Env }>();
@@ -57,6 +60,28 @@ app.post("/market/plan", async (c) => {
     console.error("[market/plan] engine unreachable:", e);
     return c.json({ error: { code: "engine_unavailable", message: "engine unreachable" } }, 502);
   }
+});
+
+// Best swap quote across the DEX aggregators (0x + KyberSwap). Server-side because the 0x key is a
+// secret; returns the fields the client drops into a SWAP Action (approve `router`, relay `routeData`,
+// contract enforces `minOut`). `quotedBy` shows what each provider offered.
+app.post("/market/quote", async (c) => {
+  const b = (await c.req.json().catch(() => ({}))) as {
+    sellToken?: string; buyToken?: string; sellAmount?: string; taker?: string; slippageBps?: number; chainId?: number;
+  };
+  if (!b.sellToken || !b.buyToken || !b.sellAmount || !b.taker) {
+    return c.json({ error: { code: "bad_request", message: "sellToken, buyToken, sellAmount, taker required" } }, 400);
+  }
+  const result = await bestQuote(c.env, {
+    chainId: b.chainId ?? 8453, // Base
+    sellToken: b.sellToken,
+    buyToken: b.buyToken,
+    sellAmount: b.sellAmount,
+    taker: b.taker,
+    slippageBps: b.slippageBps ?? 100, // 1% default
+  });
+  if (!result) return c.json({ error: { code: "no_route", message: "no aggregator route available" } }, 502);
+  return c.json({ ...result.best, quotedBy: result.all.map((q) => ({ provider: q.provider, buyAmount: q.buyAmount })) });
 });
 
 app.all("*", async (c) => {
