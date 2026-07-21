@@ -33,6 +33,7 @@ export function createApi(store: Store, opts: ApiOptions = {}): Hono {
     const values = await store.latestValues();
     let aum = 0;
     for (const v of values.values()) aum += Number(v);
+    const feeBps = Number((await store.getMeta("fee_bps")) ?? 0);
     return c.json({
       users: agg.users,
       totalDeposited: usd(agg.totalDeposited),
@@ -40,8 +41,27 @@ export function createApi(store: Store, opts: ApiOptions = {}): Hono {
       netPrincipal: usd(Number(agg.totalDeposited) - Number(agg.totalWithdrawn)),
       aum: usd(aum),
       revenue: usd(agg.totalFees), // deposit fees collected to date
+      currentFeeBps: feeBps, // the live deposit-fee rate (0 = off)
+      currentFeePct: feeBps / 100,
       unit: "usd",
       updatedAt: Date.now(),
+    });
+  });
+
+  // Governance audit trail: every registry admin action (fee/cap/whitelist/protocol/asset/route/…).
+  app.get("/ops/audit", async (c) => {
+    const no = denied(c.req.header("Authorization"));
+    if (no) return no;
+    const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 100), 1), 1000);
+    const events = await store.adminEvents(limit);
+    return c.json({
+      events: events.map((e) => ({
+        event: e.event,
+        args: JSON.parse(e.args),
+        block: e.block,
+        ts: e.ts,
+        txHash: e.tx_hash,
+      })),
     });
   });
 

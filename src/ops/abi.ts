@@ -18,6 +18,26 @@ export const DepositFeePaid = parseAbiItem(
   "event DepositFeePaid(bytes32 indexed positionId, address indexed collector, uint256 fee)",
 );
 
+// ── Governance / admin events (ProtocolRegistry) — the full audit trail of admin actions. Enums are
+//    uint8 on the wire, so the topic hashes match the contract's enum-typed events. ──────────────
+export const ADMIN_EVENTS = [
+  parseAbiItem(
+    "event ProtocolAdded(bytes32 indexed positionId, uint8 adapterType, address target, address asset, bytes32 category)",
+  ),
+  parseAbiItem("event ProtocolDisabled(bytes32 indexed positionId)"),
+  parseAbiItem("event AssetAdded(address indexed token, uint8 class)"),
+  parseAbiItem("event AssetDisabled(address indexed token)"),
+  parseAbiItem("event RouteSet(address indexed router, bool approved)"),
+  parseAbiItem("event FactorySet(address indexed factory)"),
+  parseAbiItem("event BaseAssetSet(address indexed asset)"),
+  parseAbiItem("event WhitelistEnabledSet(bool enabled)"),
+  parseAbiItem("event AllowedSet(address indexed user, bool allowed)"),
+  parseAbiItem("event DepositCapEnabledSet(bool enabled)"),
+  parseAbiItem("event DepositCapSet(uint256 cap)"),
+  parseAbiItem("event DepositFeeBpsSet(uint16 bps)"),
+  parseAbiItem("event FeeCollectorSet(address indexed collector)"),
+];
+
 // ── Read ABIs for the value pass ──────────────────────────────────────────────────────────────
 export const erc20Abi = parseAbi([
   "function balanceOf(address) view returns (uint256)",
@@ -47,6 +67,7 @@ export const registryAbi = parseAbi([
   "function allPositionIds() view returns (bytes32[])",
   "function getProtocol(bytes32) view returns ((uint8 adapterType, address target, address asset, bytes32 category, uint8 status))",
   "function baseAsset() view returns (address)",
+  "function depositFee() view returns (uint16 bps, address collector)",
 ]);
 
 // AdapterType enum (Types.sol): NONE=0, ERC4626=1, AAVE=2.

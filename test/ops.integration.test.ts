@@ -53,6 +53,7 @@ async function main() {
   eq(r1.accounts, 2, "AccountCreated indexed for both users");
   eq(r1.flows, 4, "flows indexed = 3 deposits + 1 withdraw");
   eq(r1.fees, 2, "DepositFeePaid indexed = 2 (one per savings deposit)");
+  eq(r1.admin, 10, "admin events = 2 protocols + 3 assets + route + factory + baseAsset + collector + feeBps");
 
   const accounts = await store.listAccounts();
   eq(accounts.length, 2, "two accounts stored");
@@ -83,6 +84,7 @@ async function main() {
   eq(stats.netPrincipal, 792, "/stats netPrincipal = $792");
   eq(stats.aum, 1992, "/stats aum = $1992");
   eq(stats.revenue, 8, "/stats revenue = $8 (deposit fees)");
+  eq(stats.currentFeeBps, 100, "/stats currentFeeBps = 100 (live 1% rate)");
 
   const unauth = await app.request("/ops/accounts");
   eq(unauth.status, 401, "/ops/accounts without bearer → 401");
@@ -94,6 +96,15 @@ async function main() {
     1992,
     "account values sum to $1992",
   );
+
+  console.log("admin audit:");
+  eq((await app.request("/ops/audit")).status, 401, "/ops/audit without bearer → 401");
+  const audit = await (await app.request("/ops/audit", { headers: { Authorization: "Bearer test-key" } })).json();
+  eq(audit.events.length, 10, "audit feed lists all 10 admin events");
+  const feeSet = audit.events.find((e: { event: string; args: { bps?: number } }) => e.event === "DepositFeeBpsSet");
+  ok(feeSet?.args.bps === 100, "DepositFeeBpsSet(100) captured with its value");
+  ok(audit.events.some((e: { event: string }) => e.event === "FeeCollectorSet"), "FeeCollectorSet captured");
+  ok(audit.events.some((e: { event: string }) => e.event === "ProtocolAdded"), "ProtocolAdded captured");
 
   console.log("idempotency:");
   const r2 = await runIndexPass(client, store, cfg); // cursor is past head → no re-read

@@ -27,12 +27,25 @@ export interface ValueRow {
   ts: number | null;
 }
 
+export interface AdminEventRow {
+  tx_hash: string;
+  log_index: number;
+  event: string;
+  args: string; // JSON (bigints as strings)
+  block: number;
+  ts?: number | null;
+}
+
 export interface Store {
   init(schema: string): Promise<void>;
   upsertAccount(a: AccountRow): Promise<void>;
   insertFlow(f: FlowRow): Promise<void>;
+  insertAdminEvent(e: AdminEventRow): Promise<void>;
+  adminEvents(limit: number): Promise<AdminEventRow[]>;
   getCursor(deployBlock: bigint): Promise<bigint>;
   setCursor(block: bigint): Promise<void>;
+  setMeta(key: string, value: string): Promise<void>;
+  getMeta(key: string): Promise<string | null>;
   listAccounts(): Promise<AccountRow[]>;
   upsertValue(account: string, valueUsd: string, block: number, ts: number): Promise<void>;
   latestValues(): Promise<Map<string, string>>; // account → value_usd
@@ -83,16 +96,43 @@ export class D1Store implements Store {
       .run();
   }
 
+  async insertAdminEvent(e: AdminEventRow): Promise<void> {
+    await this.db
+      .prepare(
+        `INSERT INTO ops_admin_events (tx_hash, log_index, event, args, block, ts)
+         VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(tx_hash, log_index) DO NOTHING`,
+      )
+      .bind(e.tx_hash, e.log_index, e.event, e.args, e.block, e.ts ?? null)
+      .run();
+  }
+
+  async adminEvents(limit: number): Promise<AdminEventRow[]> {
+    const r = await this.db
+      .prepare(`SELECT * FROM ops_admin_events ORDER BY block DESC, log_index DESC LIMIT ?`)
+      .bind(limit)
+      .all<AdminEventRow>();
+    return r.results ?? [];
+  }
+
+  async getMeta(key: string): Promise<string | null> {
+    const row = await this.db.prepare(`SELECT value FROM ops_meta WHERE key = ?`).bind(key).first<{ value: string }>();
+    return row ? row.value : null;
+  }
+
+  async setMeta(key: string, value: string): Promise<void> {
+    await this.db
+      .prepare(`INSERT INTO ops_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+      .bind(key, value)
+      .run();
+  }
+
   async getCursor(deployBlock: bigint): Promise<bigint> {
-    const row = await this.db.prepare(`SELECT value FROM ops_meta WHERE key = ?`).bind(CURSOR).first<{ value: string }>();
-    return row ? BigInt(row.value) : deployBlock;
+    const v = await this.getMeta(CURSOR);
+    return v !== null ? BigInt(v) : deployBlock;
   }
 
   async setCursor(block: bigint): Promise<void> {
-    await this.db
-      .prepare(`INSERT INTO ops_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
-      .bind(CURSOR, block.toString())
-      .run();
+    await this.setMeta(CURSOR, block.toString());
   }
 
   async listAccounts(): Promise<AccountRow[]> {

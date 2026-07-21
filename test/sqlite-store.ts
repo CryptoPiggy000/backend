@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import type { AccountRow, FlowRow, Store, ValueRow } from "../src/ops/store";
+import type { AccountRow, AdminEventRow, FlowRow, Store, ValueRow } from "../src/ops/store";
 import { splitSql } from "../src/ops/store";
 
 // A synchronous better-sqlite3 impl of the same Store the worker backs with D1 — lets the integration
@@ -33,15 +33,39 @@ export class SqliteStore implements Store {
       .run(f.tx_hash, f.log_index, f.account, f.kind, f.amount, f.net_after ?? null, f.block, f.ts ?? null);
   }
 
+  async insertAdminEvent(e: AdminEventRow): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO ops_admin_events (tx_hash, log_index, event, args, block, ts)
+         VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(tx_hash, log_index) DO NOTHING`,
+      )
+      .run(e.tx_hash, e.log_index, e.event, e.args, e.block, e.ts ?? null);
+  }
+
+  async adminEvents(limit: number): Promise<AdminEventRow[]> {
+    return this.db
+      .prepare(`SELECT * FROM ops_admin_events ORDER BY block DESC, log_index DESC LIMIT ?`)
+      .all(limit) as AdminEventRow[];
+  }
+
+  async getMeta(key: string): Promise<string | null> {
+    const row = this.db.prepare(`SELECT value FROM ops_meta WHERE key = ?`).get(key) as { value: string } | undefined;
+    return row ? row.value : null;
+  }
+
+  async setMeta(key: string, value: string): Promise<void> {
+    this.db
+      .prepare(`INSERT INTO ops_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+      .run(key, value);
+  }
+
   async getCursor(deployBlock: bigint): Promise<bigint> {
-    const row = this.db.prepare(`SELECT value FROM ops_meta WHERE key = 'cursor_block'`).get() as { value: string } | undefined;
-    return row ? BigInt(row.value) : deployBlock;
+    const v = await this.getMeta("cursor_block");
+    return v !== null ? BigInt(v) : deployBlock;
   }
 
   async setCursor(block: bigint): Promise<void> {
-    this.db
-      .prepare(`INSERT INTO ops_meta (key, value) VALUES ('cursor_block', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
-      .run(block.toString());
+    await this.setMeta("cursor_block", block.toString());
   }
 
   async listAccounts(): Promise<AccountRow[]> {

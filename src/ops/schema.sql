@@ -32,4 +32,18 @@ CREATE TABLE IF NOT EXISTS ops_account_value (
   PRIMARY KEY (account, block)
 );
 
+-- Governance audit trail: every ProtocolRegistry admin action (fee/cap/whitelist/protocol/asset/route/
+-- factory/base-asset changes). A public on-chain record that admin powers stayed within bounds.
+CREATE TABLE IF NOT EXISTS ops_admin_events (
+  tx_hash   TEXT NOT NULL,
+  log_index INTEGER NOT NULL,
+  event     TEXT NOT NULL,       -- e.g. 'DepositFeeBpsSet'
+  args      TEXT NOT NULL,       -- JSON of the event args (bigints as strings)
+  block     INTEGER NOT NULL,
+  ts        INTEGER,
+  PRIMARY KEY (tx_hash, log_index)
+);
+CREATE INDEX IF NOT EXISTS ops_admin_events_event ON ops_admin_events(event);
+CREATE INDEX IF NOT EXISTS ops_admin_events_block ON ops_admin_events(block);
+
 CREATE TABLE IF NOT EXISTS ops_meta (key TEXT PRIMARY KEY, value TEXT);

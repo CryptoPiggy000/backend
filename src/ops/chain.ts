@@ -32,6 +32,10 @@ export interface DecodedLog {
   logIndex: number | null;
 }
 
+export interface NamedLog extends DecodedLog {
+  eventName: string;
+}
+
 /** eth_getLogs for one event, walked in ≤`range` windows (public-RPC range limit). `address` may be a
  *  single contract, a set, or undefined (topic-only across all addresses — for clone events like the fee,
  *  emitted by many per-user accounts). Passing `event` makes viem decode `args`. */
@@ -52,6 +56,26 @@ export async function getEventLogs(
       : { event, fromBlock: start, toBlock: end };
     const logs = await client.getLogs(filter);
     out.push(...(logs as unknown as DecodedLog[]));
+  }
+  return out;
+}
+
+/** eth_getLogs for MANY events on one address in a single call per window; each log carries `eventName`
+ *  so a generic audit indexer can route by type. Used for the registry's governance/admin events. */
+export async function getMultiEventLogs(
+  client: PublicClient,
+  address: Address,
+  events: AbiEvent[],
+  fromBlock: bigint,
+  toBlock: bigint,
+  range: bigint,
+): Promise<NamedLog[]> {
+  const out: NamedLog[] = [];
+  for (let start = fromBlock; start <= toBlock; start += range) {
+    let end = start + range - 1n;
+    if (end > toBlock) end = toBlock;
+    const logs = await client.getLogs({ address, events, fromBlock: start, toBlock: end });
+    out.push(...(logs as unknown as NamedLog[]));
   }
   return out;
 }
@@ -136,6 +160,12 @@ export async function enumeratePositions(client: PublicClient, registry: Address
 
 export async function readBaseAsset(client: PublicClient, registry: Address): Promise<Address> {
   return read<Address>(client, registry, registryAbi, "baseAsset");
+}
+
+/** The current deposit fee straight from the registry — the live source of truth for `/stats`. */
+export async function readDepositFee(client: PublicClient, registry: Address): Promise<{ bps: number; collector: string }> {
+  const [bps, collector] = await read<[number, Address]>(client, registry, registryAbi, "depositFee");
+  return { bps: Number(bps), collector };
 }
 
 /** Live portfolio value of one account, in µUSD: idle base asset + Aave + vaults + held×price. */

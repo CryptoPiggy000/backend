@@ -14,10 +14,11 @@ deposits, withdrawals, net principal, and live per-account portfolio value.
 
 | Method | Path | Auth | Returns |
 |---|---|---|---|
-| GET | `/stats` | public | `{ users, totalDeposited, totalWithdrawn, netPrincipal, aum, revenue, unit, updatedAt }` (USD; no addresses) |
+| GET | `/stats` | public | `{ users, totalDeposited, totalWithdrawn, netPrincipal, aum, revenue, currentFeeBps, currentFeePct, unit, updatedAt }` (USD; no addresses) |
 | GET | `/ops/accounts` | bearer | `[{ account, owner, createdTs, principal, value }]` |
 | GET | `/ops/account/:addr` | bearer | one account: `flows[]` + `valueHistory[]` |
 | GET | `/ops/activity?limit=` | bearer | recent deposit/withdraw feed |
+| GET | `/ops/audit?limit=` | bearer | governance audit trail — every registry admin action (`{ event, args, block, ts, txHash }`) |
 | GET | `/health` | public | liveness |
 | POST | `/ops/migrate` `/ops/reindex` `/ops/revalue` | bearer | bootstrap schema / force a pass (backfill, debug) |
 
@@ -57,3 +58,7 @@ deploy** (`DeployBase`), which mints those addresses and the deploy block.
 - Reorg buffer: indexes up to `latest − CONFIRMATIONS` (5 on Base). Cursor is stored in `ops_meta`.
 - **Revenue** (`/stats.revenue`) is the sum of the account-level `DepositFeePaid` events (the entry fee),
   indexed topic-only across the account clones and stored as `fee` rows in `ops_flows`.
+- **Governance audit** (`/ops/audit`): all 13 `ProtocolRegistry` admin events (fee/cap/whitelist/
+  protocol/asset/route/factory/base-asset changes) are indexed into `ops_admin_events` — the on-chain
+  record that admin powers stayed within bounds. The **current** fee is read live each pass and shown as
+  `/stats.currentFeeBps` (history is in the audit feed).
