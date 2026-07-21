@@ -14,7 +14,7 @@ deposits, withdrawals, net principal, and live per-account portfolio value.
 
 | Method | Path | Auth | Returns |
 |---|---|---|---|
-| GET | `/stats` | public | `{ users, totalDeposited, totalWithdrawn, netPrincipal, aum, unit, updatedAt }` (USD; no addresses) |
+| GET | `/stats` | public | `{ users, totalDeposited, totalWithdrawn, netPrincipal, aum, revenue, unit, updatedAt }` (USD; no addresses) |
 | GET | `/ops/accounts` | bearer | `[{ account, owner, createdTs, principal, value }]` |
 | GET | `/ops/account/:addr` | bearer | one account: `flows[]` + `valueHistory[]` |
 | GET | `/ops/activity?limit=` | bearer | recent deposit/withdraw feed |
@@ -55,3 +55,5 @@ deploy** (`DeployBase`), which mints those addresses and the deploy block.
 - `netDeployed`/principal is **cost basis** (what accounts deployed), not market value; `value`/`aum`
   is the live on-chain value incl. yield/gains from the snapshot pass.
 - Reorg buffer: indexes up to `latest − CONFIRMATIONS` (5 on Base). Cursor is stored in `ops_meta`.
+- **Revenue** (`/stats.revenue`) is the sum of the account-level `DepositFeePaid` events (the entry fee),
+  indexed topic-only across the account clones and stored as `fee` rows in `ops_flows`.

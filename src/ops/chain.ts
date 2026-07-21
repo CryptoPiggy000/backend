@@ -26,16 +26,18 @@ export function usd6(raw: bigint, dec: number, price8: bigint = 100_000_000n): b
 
 export interface DecodedLog {
   args: Record<string, unknown>;
+  address: string; // the emitting contract (for clone events, this IS the account)
   blockNumber: bigint | null;
   transactionHash: string | null;
   logIndex: number | null;
 }
 
-/** eth_getLogs for one event on one address, walked in ≤`range` windows (public-RPC range limit).
- *  Passing `event` makes viem decode `args`; the cast surfaces that in the return type. */
+/** eth_getLogs for one event, walked in ≤`range` windows (public-RPC range limit). `address` may be a
+ *  single contract, a set, or undefined (topic-only across all addresses — for clone events like the fee,
+ *  emitted by many per-user accounts). Passing `event` makes viem decode `args`. */
 export async function getEventLogs(
   client: PublicClient,
-  address: Address,
+  address: Address | Address[] | undefined,
   event: AbiEvent,
   fromBlock: bigint,
   toBlock: bigint,
@@ -45,7 +47,10 @@ export async function getEventLogs(
   for (let start = fromBlock; start <= toBlock; start += range) {
     let end = start + range - 1n;
     if (end > toBlock) end = toBlock;
-    const logs = await client.getLogs({ address, event, fromBlock: start, toBlock: end });
+    const filter = address
+      ? { address, event, fromBlock: start, toBlock: end }
+      : { event, fromBlock: start, toBlock: end };
+    const logs = await client.getLogs(filter);
     out.push(...(logs as unknown as DecodedLog[]));
   }
   return out;

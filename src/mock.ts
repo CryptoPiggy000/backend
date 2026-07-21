@@ -6,7 +6,6 @@ import { Hono } from "hono";
 
 const YEAR_MS = 365 * 24 * 60 * 60 * 1000;
 const DEMO_SPEED = 8000; // match the frontend sim so behaviour lines up
-const HARVEST_FEE_BPS = 100; // 1%
 
 type Position = { key: string; name: string; base: bigint; apyBps: number };
 type Slice = { key: string; name: string; pct: number; apyBps: number };
@@ -149,13 +148,11 @@ mockApp.post("/operations/earn", async (c) => {
 
 mockApp.post("/operations/harvest", (c) => {
   const gross = accrued(now());
-  const fee = (gross * BigInt(HARVEST_FEE_BPS)) / 10_000n;
   return c.json(
     buildOp("harvest", {}, {
       kind: "harvest",
       grossBase: gross.toString(),
-      feeBase: fee.toString(),
-      netBase: (gross - fee).toString(),
+      netBase: gross.toString(), // harvest is free — the fee is on deposits only
     }),
   );
 });
@@ -196,8 +193,7 @@ mockApp.post("/operations/:id/submit", (c) => {
     S.earnSince = t;
     log("earn", `Put ${usd2(amt)} to work`);
   } else if (op.kind === "harvest") {
-    const gross = accrued(t);
-    const net = gross - (gross * BigInt(HARVEST_FEE_BPS)) / 10_000n;
+    const net = accrued(t); // harvest is free — the fee is on deposits only
     S.harvestedBase += net;
     S.earnSince = S.positions.length ? t : null;
     log("harvest", `Harvested ${usd2(net)}`);

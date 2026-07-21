@@ -1,5 +1,5 @@
 import { type PublicClient, zeroAddress } from "viem";
-import { AccountCreated, Deployed, Returned } from "./abi";
+import { AccountCreated, DepositFeePaid, Deployed, Returned } from "./abi";
 import { blockTimestamps, getEventLogs, type OpsConfig, readBaseAsset, readDecimals, usd6 } from "./chain";
 import type { Store } from "./store";
 
@@ -8,6 +8,7 @@ export interface IndexResult {
   to: bigint;
   accounts: number;
   flows: number;
+  fees: number;
 }
 
 /**
@@ -20,16 +21,21 @@ export async function runIndexPass(client: PublicClient, store: Store, cfg: OpsC
   const latest = await client.getBlockNumber();
   const safeHead = latest > cfg.confirmations ? latest - cfg.confirmations : 0n;
   const from = await store.getCursor(cfg.deployBlock);
-  if (safeHead < from) return { from, to: from, accounts: 0, flows: 0 };
+  if (safeHead < from) return { from, to: from, accounts: 0, flows: 0, fees: 0 };
   const to = safeHead;
 
   const created = await getEventLogs(client, cfg.factory, AccountCreated, from, to, cfg.range);
   const deployed = await getEventLogs(client, cfg.registry, Deployed, from, to, cfg.range);
   const returned = await getEventLogs(client, cfg.registry, Returned, from, to, cfg.range);
+  // Fee events are emitted by the per-user account clones, not a fixed address → topic-only across all
+  // addresses. (At larger scale, constrain to the known account set to avoid a wide topic scan.)
+  const fees = await getEventLogs(client, undefined, DepositFeePaid, from, to, cfg.range);
 
   const ts = await blockTimestamps(
     client,
-    [...created, ...deployed, ...returned].map((l) => l.blockNumber!).filter((b): b is bigint => b != null),
+    [...created, ...deployed, ...returned, ...fees]
+      .map((l) => l.blockNumber!)
+      .filter((b): b is bigint => b != null),
   );
 
   // base-asset decimals → normalize flow amounts (raw USDC units) to canonical µUSD
@@ -66,6 +72,21 @@ export async function runIndexPass(client: PublicClient, store: Store, cfg: OpsC
   await writeFlows(deployed, "deposit");
   await writeFlows(returned, "withdraw");
 
+  // Revenue: each DepositFeePaid is stored as a 'fee' flow keyed to the emitting account (log.address).
+  for (const log of fees) {
+    const a = log.args as { fee: bigint };
+    await store.insertFlow({
+      tx_hash: log.transactionHash!,
+      log_index: log.logIndex!,
+      account: log.address.toLowerCase(),
+      kind: "fee",
+      amount: usd6(a.fee, baseDec).toString(),
+      net_after: null,
+      block: Number(log.blockNumber),
+      ts: ts.get(String(log.blockNumber)) ?? null,
+    });
+  }
+
   await store.setCursor(to + 1n); // next unprocessed block
-  return { from, to, accounts: created.length, flows: deployed.length + returned.length };
+  return { from, to, accounts: created.length, flows: deployed.length + returned.length, fees: fees.length };
 }

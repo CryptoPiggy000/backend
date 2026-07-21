@@ -13,6 +13,10 @@ export const Deployed = parseAbiItem(
 export const Returned = parseAbiItem(
   "event Returned(address indexed account, uint256 amount, uint256 netDeployed)",
 );
+// SmartInvestmentAccount (each clone): the entry fee skimmed on a savings deposit → revenue.
+export const DepositFeePaid = parseAbiItem(
+  "event DepositFeePaid(bytes32 indexed positionId, address indexed collector, uint256 fee)",
+);
 
 // ── Read ABIs for the value pass ──────────────────────────────────────────────────────────────
 export const erc20Abi = parseAbi([

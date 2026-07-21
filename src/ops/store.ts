@@ -36,7 +36,7 @@ export interface Store {
   listAccounts(): Promise<AccountRow[]>;
   upsertValue(account: string, valueUsd: string, block: number, ts: number): Promise<void>;
   latestValues(): Promise<Map<string, string>>; // account → value_usd
-  aggregate(): Promise<{ users: number; totalDeposited: string; totalWithdrawn: string }>;
+  aggregate(): Promise<{ users: number; totalDeposited: string; totalWithdrawn: string; totalFees: string }>;
   accountPrincipals(): Promise<Map<string, string>>; // account → net principal (µUSD, deposits − withdraws)
   accountFlows(account: string): Promise<FlowRow[]>;
   accountValues(account: string): Promise<ValueRow[]>;
@@ -121,15 +121,23 @@ export class D1Store implements Store {
     return new Map((r.results ?? []).map((x) => [x.account, x.value_usd]));
   }
 
-  async aggregate(): Promise<{ users: number; totalDeposited: string; totalWithdrawn: string }> {
+  async aggregate(): Promise<{ users: number; totalDeposited: string; totalWithdrawn: string; totalFees: string }> {
     const users = await this.db.prepare(`SELECT COUNT(*) AS n FROM ops_accounts`).first<{ n: number }>();
-    const dep = await this.db
-      .prepare(`SELECT COALESCE(SUM(CAST(amount AS INTEGER)), 0) AS s FROM ops_flows WHERE kind = 'deposit'`)
-      .first<{ s: number }>();
-    const wd = await this.db
-      .prepare(`SELECT COALESCE(SUM(CAST(amount AS INTEGER)), 0) AS s FROM ops_flows WHERE kind = 'withdraw'`)
-      .first<{ s: number }>();
-    return { users: users?.n ?? 0, totalDeposited: String(dep?.s ?? 0), totalWithdrawn: String(wd?.s ?? 0) };
+    const sum = async (kind: string) =>
+      String(
+        (
+          await this.db
+            .prepare(`SELECT COALESCE(SUM(CAST(amount AS INTEGER)), 0) AS s FROM ops_flows WHERE kind = ?`)
+            .bind(kind)
+            .first<{ s: number }>()
+        )?.s ?? 0,
+      );
+    return {
+      users: users?.n ?? 0,
+      totalDeposited: await sum("deposit"),
+      totalWithdrawn: await sum("withdraw"),
+      totalFees: await sum("fee"),
+    };
   }
 
   async accountPrincipals(): Promise<Map<string, string>> {

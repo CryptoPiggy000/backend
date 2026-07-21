@@ -46,10 +46,13 @@ async function main() {
   await store.init(schema);
   const client = makeClient(rpc);
 
+  // Scenario runs a 1% entry fee, so deposits deploy NET (297/495) and each emits DepositFeePaid.
+  const M = (usd: number) => String(BigInt(usd) * 10n ** 6n);
   console.log("index pass:");
   const r1 = await runIndexPass(client, store, cfg);
   eq(r1.accounts, 2, "AccountCreated indexed for both users");
   eq(r1.flows, 4, "flows indexed = 3 deposits + 1 withdraw");
+  eq(r1.fees, 2, "DepositFeePaid indexed = 2 (one per savings deposit)");
 
   const accounts = await store.listAccounts();
   eq(accounts.length, 2, "two accounts stored");
@@ -61,30 +64,36 @@ async function main() {
   console.log("aggregate:");
   const agg = await store.aggregate();
   eq(agg.users, 2, "user count");
-  eq(agg.totalDeposited, String(1000n * 10n ** 6n), "totalDeposited = $1000 (µUSD)");
-  eq(agg.totalWithdrawn, String(200n * 10n ** 6n), "totalWithdrawn = $200 (µUSD)");
+  eq(agg.totalDeposited, M(992), "totalDeposited = $992 net (297 + 200 buy + 495)");
+  eq(agg.totalWithdrawn, M(200), "totalWithdrawn = $200");
+  eq(agg.totalFees, M(8), "totalFees = $8 revenue (1% of 300 + 1% of 500)");
 
   console.log("value pass:");
   await runValuePass(client, store, cfg);
   const values = await store.latestValues();
   const acct1 = env("ACCT1").toLowerCase();
   const acct2 = env("ACCT2").toLowerCase();
-  eq(values.get(acct1), String(1000n * 10n ** 6n), "acct1 value = $1000 (idle 500 + aave 300 + wstETH 200)");
-  eq(values.get(acct2), String(1000n * 10n ** 6n), "acct2 value = $1000 (idle 700 + aave 300)");
+  eq(values.get(acct1), M(997), "acct1 value = $997 (idle 500 + aave 297 + wstETH 200)");
+  eq(values.get(acct2), M(995), "acct2 value = $995 (idle 700 + aave 295)");
 
   console.log("JSON API:");
   const app = createApi(store, { adminKey: "test-key", corsOrigin: "*" });
   const stats = await (await app.request("/stats")).json();
   eq(stats.users, 2, "/stats users");
-  eq(stats.netPrincipal, 800, "/stats netPrincipal = $800");
-  eq(stats.aum, 2000, "/stats aum = $2000");
+  eq(stats.netPrincipal, 792, "/stats netPrincipal = $792");
+  eq(stats.aum, 1992, "/stats aum = $1992");
+  eq(stats.revenue, 8, "/stats revenue = $8 (deposit fees)");
 
   const unauth = await app.request("/ops/accounts");
   eq(unauth.status, 401, "/ops/accounts without bearer → 401");
   const opsRes = await app.request("/ops/accounts", { headers: { Authorization: "Bearer test-key" } });
   const ops = await opsRes.json();
   eq(ops.accounts.length, 2, "/ops/accounts lists both");
-  ok(ops.accounts.every((a: { value: number }) => a.value === 1000), "each account value = $1000");
+  eq(
+    ops.accounts.reduce((s: number, a: { value: number }) => s + a.value, 0),
+    1992,
+    "account values sum to $1992",
+  );
 
   console.log("idempotency:");
   const r2 = await runIndexPass(client, store, cfg); // cursor is past head → no re-read

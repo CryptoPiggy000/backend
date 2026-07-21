@@ -68,11 +68,13 @@ export class SqliteStore implements Store {
     return new Map(rows.map((x) => [x.account, x.value_usd]));
   }
 
-  async aggregate(): Promise<{ users: number; totalDeposited: string; totalWithdrawn: string }> {
+  async aggregate(): Promise<{ users: number; totalDeposited: string; totalWithdrawn: string; totalFees: string }> {
     const users = (this.db.prepare(`SELECT COUNT(*) AS n FROM ops_accounts`).get() as { n: number }).n;
-    const dep = (this.db.prepare(`SELECT COALESCE(SUM(CAST(amount AS INTEGER)), 0) AS s FROM ops_flows WHERE kind = 'deposit'`).get() as { s: number }).s;
-    const wd = (this.db.prepare(`SELECT COALESCE(SUM(CAST(amount AS INTEGER)), 0) AS s FROM ops_flows WHERE kind = 'withdraw'`).get() as { s: number }).s;
-    return { users, totalDeposited: String(dep), totalWithdrawn: String(wd) };
+    const sum = (kind: string) =>
+      String(
+        (this.db.prepare(`SELECT COALESCE(SUM(CAST(amount AS INTEGER)), 0) AS s FROM ops_flows WHERE kind = ?`).get(kind) as { s: number }).s,
+      );
+    return { users, totalDeposited: sum("deposit"), totalWithdrawn: sum("withdraw"), totalFees: sum("fee") };
   }
 
   async accountPrincipals(): Promise<Map<string, string>> {

@@ -39,6 +39,7 @@ export function createApi(store: Store, opts: ApiOptions = {}): Hono {
       totalWithdrawn: usd(agg.totalWithdrawn),
       netPrincipal: usd(Number(agg.totalDeposited) - Number(agg.totalWithdrawn)),
       aum: usd(aum),
+      revenue: usd(agg.totalFees), // deposit fees collected to date
       unit: "usd",
       updatedAt: Date.now(),
     });
