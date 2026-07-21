@@ -1,0 +1,70 @@
+# cryptopiggy-ops — the OPERATIONS indexer. A SECOND worker in this repo, separate from the public
+# proxy (wrangler.toml / cryptopiggy-backend). It indexes OUR OWN protocol contracts (accounts opened,
+# principal deployed/returned) and snapshots live per-account portfolio value, and serves a JSON API
+# (public /stats for the app + admin /ops/* for operators). See OPS.md.
+name = "cryptopiggy-ops"
+main = "src/ops/index.ts"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+# SHARED store: the same D1 the engine uses (indexer + planner already share it). Ops tables are
+# ops_-prefixed and created with idempotent DDL (NOT wrangler migrations) so they never touch the
+# engine's market tables or its d1_migrations tracking. Local dev id is a placeholder.
+[[d1_databases]]
+binding = "DB"
+database_name = "cryptopiggy_market"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[[rules]]
+type = "Text"
+globs = ["**/*.sql"]
+
+# Two crons; the worker dispatches by event.cron: fast log-index + slower value snapshot.
+[triggers]
+crons = ["*/5 * * * *", "*/30 * * * *"]
+
+[vars]
+RPC = "http://127.0.0.1:8545" # anvil (local demo); set from DeployLocal output
+REGISTRY = "0x0000000000000000000000000000000000000000" # set from DeployLocal / DeployBase output
+FACTORY = "0x0000000000000000000000000000000000000000"
+DEPLOY_BLOCK = "0"    # first block to backfill from (registry/factory deploy block)
+CONFIRMATIONS = "1"   # anvil is instant; Base uses 5 (see env.production)
+RANGE = "3000"        # max blocks per eth_getLogs call (public-RPC range limit)
+CORS_ORIGIN = "*"
+# JSON maps for the value pass (dev). PROD sets real ones / uses Chainlink.
+#   HELD_ASSETS     ["<token>", ...]               — held-asset tokens to value (registry can't enumerate)
+#   ATOKENS         {"<pool>:<asset>":"<aToken>"}  — Aave value = aToken.balanceOf; unset → mock supplied()
+#   CHAINLINK       {"<token>":"<usd-feed>"}       — held-asset USD price (8dp) on Base
+#   PRICE_OVERRIDES {"<token>":<usdPrice>}         — dev/anvil fixed prices (no Chainlink locally)
+HELD_ASSETS = "[]"
+ATOKENS = "{}"
+CHAINLINK = "{}"
+PRICE_OVERRIDES = "{}"
+# ADMIN_KEY is a secret (never a var): `wrangler secret put ADMIN_KEY --env production`.
+
+# --- production: `wrangler deploy -c wrangler.ops.toml --env production`. Named envs don't inherit the
+#     top-level blocks, so D1 / rules / triggers / vars are redeclared. ---
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "cryptopiggy_market"
+database_id = "d3a2a0c2-7ed2-44de-969f-6fe4255452c0" # SHARED store — same id as the engine indexer/planner
+
+[[env.production.rules]]
+type = "Text"
+globs = ["**/*.sql"]
+
+[env.production.triggers]
+crons = ["*/5 * * * *", "*/30 * * * *"]
+
+[env.production.vars]
+RPC = "https://base-rpc.publicnode.com" # Base mainnet (read-only, keyless)
+REGISTRY = "0x0000000000000000000000000000000000000000" # SET after DeployBase broadcast
+FACTORY = "0x0000000000000000000000000000000000000000" # SET after DeployBase broadcast
+DEPLOY_BLOCK = "0" # SET to the registry/factory deploy block after broadcast (backfill start)
+CONFIRMATIONS = "5"
+RANGE = "3000"
+CORS_ORIGIN = "*" # tighten to the web origin once the app is deployed
+HELD_ASSETS = "[]"   # SET ["<WETH>","<cbBTC>"] — the held-asset tokens to value on Base
+ATOKENS = "{}"       # SET {"<aavePool>:<usdc>":"<aBasUSDC>"} for accurate accruing Aave value
+CHAINLINK = "{}"     # SET {"<WETH>":"<ETH/USD feed>","<cbBTC>":"<BTC/USD feed>"} on Base
+PRICE_OVERRIDES = "{}"

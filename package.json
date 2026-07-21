@@ -6,13 +6,20 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "dev:ops": "wrangler dev -c wrangler.ops.toml",
+    "deploy:ops": "wrangler deploy -c wrangler.ops.toml --env production",
+    "test:ops": "bash test/run-ops-it.sh",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "hono": "^4.6.14"
+    "hono": "^4.6.14",
+    "viem": "^2.21.55"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260706.1",
+    "@types/better-sqlite3": "^7.6.11",
+    "better-sqlite3": "^11.7.0",
+    "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "wrangler": "^4.108.0"
   }
