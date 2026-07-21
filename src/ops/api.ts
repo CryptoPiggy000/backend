@@ -13,6 +13,7 @@ const usd = (micros: string | number | null | undefined): number => Math.round(N
 /**
  * The ops JSON API:
  *   PUBLIC  GET /stats               — safe aggregates the app renders (no addresses)
+ *   PUBLIC  GET /account/:addr       — ONE account's own portfolio value + activity (the app's Portfolio)
  *   ADMIN   GET /ops/accounts        — per-account list (owner, principal, live value)
  *   ADMIN   GET /ops/account/:addr   — one account: flows + value history
  *   ADMIN   GET /ops/activity?limit= — recent deposit/withdraw feed
@@ -62,6 +63,29 @@ export function createApi(store: Store, opts: ApiOptions = {}): Hono {
         ts: e.ts,
         txHash: e.tx_hash,
       })),
+    });
+  });
+
+  // PUBLIC per-account view for the app's Portfolio. Everything here — an account's balance, cost
+  // basis, and deposit/withdraw history — is already public on-chain; we just serve the pre-indexed
+  // version so the client doesn't have to read the chain itself. Unlike /ops/account/:addr it omits
+  // the owner and the full value history, and needs no admin key: an address only exposes its own
+  // already-public activity.
+  app.get("/account/:addr", async (c) => {
+    const addr = c.req.param("addr").toLowerCase();
+    const [values, principals] = await Promise.all([store.latestValues(), store.accountPrincipals()]);
+    const value = Number(values.get(addr) ?? 0);
+    const principal = Number(principals.get(addr) ?? 0);
+    const flows = await store.accountFlows(addr);
+    return c.json({
+      account: addr,
+      principal: usd(principal),
+      value: usd(value),
+      accrued: usd(Math.max(0, value - principal)), // realized-so-far interest = live value − cost basis
+      activity: flows
+        .map((f) => ({ kind: f.kind, amount: usd(f.amount), ts: f.ts, txHash: f.tx_hash }))
+        .sort((a, b) => (b.ts ?? 0) - (a.ts ?? 0))
+        .slice(0, 50),
     });
   });
 

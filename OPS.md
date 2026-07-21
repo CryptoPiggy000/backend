@@ -15,6 +15,7 @@ deposits, withdrawals, net principal, and live per-account portfolio value.
 | Method | Path | Auth | Returns |
 |---|---|---|---|
 | GET | `/stats` | public | `{ users, totalDeposited, totalWithdrawn, netPrincipal, aum, revenue, currentFeeBps, currentFeePct, unit, updatedAt }` (USD; no addresses) |
+| GET | `/account/:addr` | public | one account's OWN portfolio for the app: `{ account, principal, value, accrued, activity[] }` — all public on-chain data, pre-indexed (no owner, no full value history; that stays admin) |
 | GET | `/ops/accounts` | bearer | `[{ account, owner, createdTs, principal, value }]` |
 | GET | `/ops/account/:addr` | bearer | one account: `flows[]` + `valueHistory[]` |
 | GET | `/ops/activity?limit=` | bearer | recent deposit/withdraw feed |
