@@ -1,6 +1,6 @@
 import type { Address } from "viem";
 import { createApi } from "./api";
-import { makeClient, type OpsConfig } from "./chain";
+import { accountPositionsUsd6, enumeratePositions, makeClient, type OpsConfig, type Position } from "./chain";
 import { runIndexPass } from "./indexer";
 import schema from "./schema.sql";
 import { D1Store } from "./store";
@@ -54,10 +54,31 @@ const serialize = (r: object) =>
 const authed = (req: Request, key?: string): boolean =>
   Boolean(key) && req.headers.get("Authorization") === `Bearer ${key}`;
 
+// One shared, short-lived cache of the registry's venue set — enumerating it costs a read per venue,
+// so we don't redo it on every /account/:addr hit within a worker instance.
+let cachedVenues: { positions: Position[]; at: number } | null = null;
+
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const store = new D1Store(env.DB);
-    const app = createApi(store, { adminKey: env.ADMIN_KEY, corsOrigin: env.CORS_ORIGIN });
+    const cfg = config(env);
+    const positionsFor = async (account: string) => {
+      const client = makeClient(env.RPC);
+      const now = Date.now();
+      if (!cachedVenues || now - cachedVenues.at > 60_000) {
+        cachedVenues = { positions: await enumeratePositions(client, cfg.registry), at: now };
+      }
+      const pv = await accountPositionsUsd6(
+        client,
+        account as Address,
+        cfg,
+        cachedVenues.positions,
+        new Map(),
+        new Map(),
+      );
+      return pv.map((p) => ({ key: p.key, name: p.name, class: p.class, valueUsd: Number(p.value6) / 1e6 }));
+    };
+    const app = createApi(store, { adminKey: env.ADMIN_KEY, corsOrigin: env.CORS_ORIGIN, positionsFor });
 
     app.get("/health", (c) => c.json({ ok: true, worker: "cryptopiggy-ops" }));
 

@@ -168,6 +168,72 @@ export async function readDepositFee(client: PublicClient, registry: Address): P
   return { bps: Number(bps), collector };
 }
 
+async function symbolOf(client: PublicClient, token: Address, cache: Map<string, string>): Promise<string> {
+  const k = token.toLowerCase();
+  const hit = cache.get(k);
+  if (hit !== undefined) return hit;
+  let sym = `${token.slice(0, 6)}…`;
+  try {
+    sym = await read<string>(client, token, erc20Abi, "symbol");
+  } catch {
+    /* non-standard token → fall back to a short address */
+  }
+  cache.set(k, sym);
+  return sym;
+}
+
+export interface PositionValue {
+  key: string; // the venue's on-chain address (lowercased)
+  name: string; // display symbol (vault/token) or "Aave"
+  class: "savings" | "crypto";
+  value6: bigint; // current µUSD value of this position for the account
+}
+
+/**
+ * The per-venue breakdown behind `accountValueUsd6` — one entry per non-zero holding (Aave / vaults /
+ * held assets). Same reads as the total; we just keep the split. Idle base asset is NOT a position.
+ * APY isn't known here (it lives in the engine's market analysis) — the client enriches that.
+ */
+export async function accountPositionsUsd6(
+  client: PublicClient,
+  account: Address,
+  cfg: OpsConfig,
+  positions: Position[],
+  decCache: Map<string, number>,
+  symCache: Map<string, string>,
+): Promise<PositionValue[]> {
+  const out: PositionValue[] = [];
+
+  for (const p of positions) {
+    if (p.adapter === ADAPTER.AAVE) {
+      const raw = await aaveValue(client, p.target, p.asset, account, cfg);
+      const v = usd6(raw, await readDecimals(client, p.asset, decCache));
+      if (v > 0n) out.push({ key: p.target.toLowerCase(), name: "Aave", class: "savings", value6: v });
+    } else if (p.adapter === ADAPTER.ERC4626) {
+      const shares = await balanceOf(client, p.target, account);
+      if (shares === 0n) continue;
+      const assets = await read<bigint>(client, p.target, erc4626Abi, "convertToAssets", [shares]);
+      const v = usd6(assets, await readDecimals(client, p.asset, decCache));
+      if (v > 0n) {
+        out.push({ key: p.target.toLowerCase(), name: await symbolOf(client, p.target, symCache), class: "savings", value6: v });
+      }
+    }
+  }
+
+  for (const token of cfg.heldAssets) {
+    const raw = await balanceOf(client, token, account);
+    if (raw === 0n) continue;
+    const price8 = await priceUsd8(client, token, cfg);
+    if (price8 === 0n) continue;
+    const v = usd6(raw, await readDecimals(client, token, decCache), price8);
+    if (v > 0n) {
+      out.push({ key: token.toLowerCase(), name: await symbolOf(client, token, symCache), class: "crypto", value6: v });
+    }
+  }
+
+  return out;
+}
+
 /** Live portfolio value of one account, in µUSD: idle base asset + Aave + vaults + held×price. */
 export async function accountValueUsd6(
   client: PublicClient,
