@@ -7,7 +7,10 @@ deposits, withdrawals, net principal, and live per-account portfolio value.
 - Code: `src/ops/` · Config: `wrangler.ops.toml` · Schema: `src/ops/schema.sql`
 - Store: the **shared** `cryptopiggy_market` D1 (the engine's DB), in `ops_`-prefixed tables. Idempotent
   DDL (not wrangler migrations) so it never touches the engine's tables.
-- Two crons: `*/5 * * * *` log-index (accounts + flows), `*/30 * * * *` value snapshot.
+- Two crons (spaced so they never share a minute): `*/10 * * * *` log-index (accounts + flows + revenue
+  + audit), `5,35 * * * *` value snapshot.
+- **Live on Base since 2026-07-27** → `https://cryptopiggy-ops-production.ai-suggestion.workers.dev`
+  (pointed at the deployed registry/factory — see `contracts/DEPLOYMENTS.md`).
 - Design: `docs/superpowers/specs/2026-07-21-ops-indexer-design.md` (in the super-repo).
 
 ## API
@@ -23,7 +26,8 @@ deposits, withdrawals, net principal, and live per-account portfolio value.
 | GET | `/health` | public | liveness |
 | POST | `/ops/migrate` `/ops/reindex` `/ops/revalue` | bearer | bootstrap schema / force a pass (backfill, debug) |
 
-Admin auth: `Authorization: Bearer <ADMIN_KEY>`. `/stats` is what the web app renders later.
+Admin auth: `Authorization: Bearer <ADMIN_KEY>`. The app's Portfolio reads `/account/:addr`; `/stats` is
+for public/marketing aggregates. Web deploy guide: `web/DEPLOY.md`.
 
 ## Local test (anvil)
 
@@ -31,24 +35,29 @@ Admin auth: `Authorization: Bearer <ADMIN_KEY>`. `/stats` is what the web app re
 npm run test:ops    # starts anvil, runs contracts/script/OpsScenario.s.sol, asserts the passes + API
 ```
 
-## Deploy to Base
+## Deployed & how to operate
 
-The indexer reads **our** registry + factory — so this can only go live **after the Base contract
-deploy** (`DeployBase`), which mints those addresses and the deploy block.
+Already deployed on Base (the `[env.production.vars]` are filled with the live registry/factory,
+`DEPLOY_BLOCK=49169715`, `HELD_ASSETS` WETH+cbBTC, `ATOKENS` aBasUSDC, `CHAINLINK` ETH/USD+BTC/USD).
+Secrets (`ADMIN_KEY`, `RPC`) are wrangler secrets + mirrored in gitignored `.env.production.secrets`.
 
-1. **Fill `wrangler.ops.toml` `[env.production.vars]`** from the `DeployBase` broadcast:
-   - `REGISTRY`, `FACTORY` — the deployed addresses
-   - `DEPLOY_BLOCK` — the block they were deployed at (backfill start)
-   - `HELD_ASSETS` — `["<WETH>","<cbBTC>"]` (the held-asset tokens to value)
-   - `ATOKENS` — `{"<aavePool>:<usdc>":"<aBasUSDC>"}` for accurate accruing Aave value
-     (Base Aave V3 aUSDC; from `PoolDataProvider.getReserveTokensAddresses(USDC)`)
-   - `CHAINLINK` — `{"<WETH>":"<ETH/USD feed>","<cbBTC>":"<BTC/USD feed>"}` (Base Chainlink feeds)
-2. **Secret:** `wrangler secret put ADMIN_KEY --env production -c wrangler.ops.toml`
-3. **Apply the schema** to the shared D1 (once):
-   `npx wrangler d1 execute cryptopiggy_market --file src/ops/schema.sql --remote`
-4. **Deploy:** `npm run deploy:ops`
-5. **Backfill:** the crons pick it up, or force it now:
-   `curl -XPOST -H "Authorization: Bearer $ADMIN_KEY" https://cryptopiggy-ops.../ops/reindex`
+**RPC must be KEYED.** Free public Base RPCs don't serve `eth_getLogs` from Cloudflare Worker egress
+(publicnode blocks archive requests; mainnet.base.org hangs the isolate). We use a keyed endpoint set as
+a **secret** (never in the toml): `wrangler secret put RPC --env production -c wrangler.ops.toml`. The
+provider's RPS cap (ours: 20) is respected by the throttled client (`MAX_RPS` in `chain.ts`, serialized
++ spaced) plus the non-overlapping crons — don't remove either.
+
+Common ops:
+- **Redeploy after a code change:** `npm run deploy:ops`
+- **Rotate the RPC/admin key:** `wrangler secret put RPC|ADMIN_KEY --env production -c wrangler.ops.toml`
+- **Force a backfill/refresh (admin):**
+  `curl -XPOST -H "Authorization: Bearer $ADMIN_KEY" $OPS_URL/ops/reindex` (logs) · `/ops/revalue` (values)
+- **Bootstrap schema on a fresh D1:** `/ops/migrate` (the crons + reindex also apply it idempotently)
+
+### Re-deploying from scratch (if ever needed)
+1. Fill `[env.production.vars]` from the `DeployBase` output (REGISTRY/FACTORY/DEPLOY_BLOCK + HELD_ASSETS
+   / ATOKENS / CHAINLINK). 2. `wrangler secret put ADMIN_KEY` + `wrangler secret put RPC` (keyed). 3.
+   `npm run deploy:ops`. 4. `curl -XPOST …/ops/reindex` to backfill.
 
 ## Notes
 
