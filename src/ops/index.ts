@@ -116,7 +116,7 @@ export default {
     const client = makeClient(env.RPC);
     const cfg = config(env);
     // The 30-min cron does the value snapshot; every other tick is the fast log-index.
-    if (event.cron === "*/30 * * * *") await runValuePass(client, store, cfg);
+    if (event.cron === "5,35 * * * *") await runValuePass(client, store, cfg);
     else await runIndexPass(client, store, cfg);
   },
 };

@@ -1,7 +1,31 @@
-import { createPublicClient, http, type Abi, type AbiEvent, type Address, type Hex, type PublicClient, zeroAddress } from "viem";
+import { createPublicClient, custom, http, type Abi, type AbiEvent, type Address, type Hex, type PublicClient, zeroAddress } from "viem";
 import { ADAPTER, aavePoolAbi, chainlinkAbi, erc20Abi, erc4626Abi, registryAbi } from "./abi";
 
 const ZERO = zeroAddress;
+
+// The provider caps requests per second (zan.top = 20 RPS / CU-limited). The passes fire many reads
+// back-to-back, so we SERIALIZE every JSON-RPC call through one queue and space consecutive calls by
+// `1000/MAX_RPS` ms. MAX_RPS is set below the provider cap for headroom. This is the hard guarantee;
+// non-overlapping crons (wrangler.ops.toml) keep two passes from doubling it across worker instances.
+const MAX_RPS = 12;
+
+function throttledTransport(rpc: string) {
+  const inner = http(rpc)({}); // instantiate the underlying HTTP transport
+  const minGapMs = Math.ceil(1000 / MAX_RPS);
+  let last = 0;
+  let queue: Promise<unknown> = Promise.resolve();
+  return custom({
+    request(args) {
+      const turn = queue.then(async () => {
+        const wait = last + minGapMs - Date.now();
+        if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+        last = Date.now();
+      });
+      queue = turn.catch(() => {});
+      return turn.then(() => inner.request(args));
+    },
+  });
+}
 
 export interface OpsConfig {
   registry: Address;
@@ -16,7 +40,7 @@ export interface OpsConfig {
 }
 
 export function makeClient(rpc: string): PublicClient {
-  return createPublicClient({ transport: http(rpc) });
+  return createPublicClient({ transport: throttledTransport(rpc) });
 }
 
 /** Canonical money: a token `raw` amount (its own `dec` decimals) priced at `price8` (8dp USD) → µUSD (6dp). */
