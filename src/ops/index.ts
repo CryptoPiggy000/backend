@@ -90,13 +90,21 @@ export default {
     });
     app.post("/ops/reindex", async (c) => {
       if (!authed(c.req.raw, env.ADMIN_KEY)) return c.json({ error: "unauthorized" }, 401);
-      await store.init(schema);
-      return c.json(serialize(await runIndexPass(makeClient(env.RPC), store, config(env))));
+      try {
+        await store.init(schema);
+        return c.json(serialize(await runIndexPass(makeClient(env.RPC), store, config(env))));
+      } catch (e) {
+        return c.json({ error: String((e as Error)?.message ?? e) }, 500);
+      }
     });
     app.post("/ops/revalue", async (c) => {
       if (!authed(c.req.raw, env.ADMIN_KEY)) return c.json({ error: "unauthorized" }, 401);
-      await store.init(schema);
-      return c.json(serialize(await runValuePass(makeClient(env.RPC), store, config(env))));
+      try {
+        await store.init(schema);
+        return c.json(serialize(await runValuePass(makeClient(env.RPC), store, config(env))));
+      } catch (e) {
+        return c.json({ error: String((e as Error)?.message ?? e) }, 500);
+      }
     });
 
     return app.fetch(req);

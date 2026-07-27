@@ -57,7 +57,9 @@ globs = ["**/*.sql"]
 crons = ["*/5 * * * *", "*/30 * * * *"]
 
 [env.production.vars]
-RPC = "https://base-rpc.publicnode.com" # Base mainnet (read-only, keyless)
+# Base mainnet RPC — MUST serve eth_getLogs over a range (publicnode rejects those as "archive").
+# mainnet.base.org works keyless; swap in a keyed archive RPC (Alchemy/QuickNode) if it rate-limits.
+RPC = "https://mainnet.base.org"
 REGISTRY = "0x451Ed81bE37303E66Bb4851e58B86B3dCFd6047a" # LIVE Base deploy (2026-07-27)
 FACTORY = "0x81af551F6346AE358966f3BF64d16d6105Ea1e8A"
 DEPLOY_BLOCK = "49169715" # registry/factory deploy block (0x2ee4533) — backfill start
