@@ -3,3 +3,5 @@ node_modules
 dist
 .dev.vars
 .env
+.env.production.secrets
+.env*.secrets
