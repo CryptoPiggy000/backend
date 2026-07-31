@@ -18,7 +18,7 @@ deposits, withdrawals, net principal, and live per-account portfolio value.
 | Method | Path | Auth | Returns |
 |---|---|---|---|
 | GET | `/stats` | public | `{ users, totalDeposited, totalWithdrawn, netPrincipal, aum, revenue, currentFeeBps, currentFeePct, unit, updatedAt }` (USD; no addresses) |
-| GET | `/account/:addr` | public | one account's OWN portfolio for the app: `{ account, principal, value, accrued, activity[] }` — all public on-chain data, pre-indexed (no owner, no full value history; that stays admin) |
+| GET | `/account/:addr` | public | one account's OWN portfolio for the app: `{ account, principal, value, accrued, positions[], activity[] }`. `value`/`principal`/`accrued`/`activity` are pre-indexed from D1; `positions[]` is the LIVE per-venue breakdown (Aave / vaults / held×price), read on demand, **cached** (15s) and **gated to indexed accounts** (arbitrary addresses → `[]`, no paid read). No owner / full value history (admin-only). |
 | GET | `/ops/accounts` | bearer | `[{ account, owner, createdTs, principal, value }]` |
 | GET | `/ops/account/:addr` | bearer | one account: `flows[]` + `valueHistory[]` |
 | GET | `/ops/activity?limit=` | bearer | recent deposit/withdraw feed |
@@ -39,25 +39,37 @@ npm run test:ops    # starts anvil, runs contracts/script/OpsScenario.s.sol, ass
 
 Already deployed on Base (the `[env.production.vars]` are filled with the live registry/factory,
 `DEPLOY_BLOCK=49169715`, `HELD_ASSETS` WETH+cbBTC, `ATOKENS` aBasUSDC, `CHAINLINK` ETH/USD+BTC/USD).
-Secrets (`ADMIN_KEY`, `RPC`) are wrangler secrets + mirrored in gitignored `.env.production.secrets`.
+Secrets (`ADMIN_KEY`, `RPC`, `READ_RPC_BEARER`) are wrangler secrets + mirrored in gitignored `.env.production.secrets`.
 
-**RPC must be KEYED.** Free public Base RPCs don't serve `eth_getLogs` from Cloudflare Worker egress
-(publicnode blocks archive requests; mainnet.base.org hangs the isolate). We use a keyed endpoint set as
-a **secret** (never in the toml): `wrangler secret put RPC --env production -c wrangler.ops.toml`. The
-provider's RPS cap (ours: 20) is respected by the throttled client (`MAX_RPS` in `chain.ts`, serialized
-+ spaced) plus the non-overlapping crons — don't remove either.
+**Two RPCs — cheap/steady on free, bursty on paid.** The cron passes and the live `/account` reads have
+different needs, so they use different endpoints:
+
+- **`RPC`** (secret) — the **cron passes** (`eth_getLogs` + valuation). Must be **keyed + archive-capable**:
+  free public Base RPCs don't serve `eth_getLogs` from Cloudflare egress (publicnode blocks archive;
+  mainnet.base.org hangs the isolate). Ours is zan.top (~20 RPS / CU-limited). The passes are serialized +
+  spaced by the throttled client (`MAX_RPS` in `chain.ts`) and run on non-overlapping crons — keep both.
+  Set: `wrangler secret put RPC --env production -c wrangler.ops.toml`.
+- **`READ_RPC`** (var, no key in the URL) + **`READ_RPC_BEARER`** (secret) — the **live `/account`
+  positions read**. Blockmachine (`https://rpc-base.blockmachine.io`), authed via `Authorization: Bearer`.
+  These reads are bursty and concurrent; sharing `RPC`'s CU budget used to 429 them → an uncaught read
+  threw → positions blanked (the `positions:[]` flicker) and concurrent hits 500'd the worker. They now go
+  to a high-headroom provider, **batched** into ~1 round-trip (`makeReadClient`, viem `batch:true`,
+  un-throttled — the provider absorbs the concurrency) and **cached** per-account (15s TTL + single-flight,
+  `positions-cache.ts`) with a last-good fallback. Falls back to `RPC` when `READ_RPC` is unset
+  (local/anvil). Set the key: `wrangler secret put READ_RPC_BEARER --env production -c wrangler.ops.toml`.
 
 Common ops:
 - **Redeploy after a code change:** `npm run deploy:ops`
-- **Rotate the RPC/admin key:** `wrangler secret put RPC|ADMIN_KEY --env production -c wrangler.ops.toml`
+- **Rotate a key:** `wrangler secret put RPC|READ_RPC_BEARER|ADMIN_KEY --env production -c wrangler.ops.toml`
 - **Force a backfill/refresh (admin):**
   `curl -XPOST -H "Authorization: Bearer $ADMIN_KEY" $OPS_URL/ops/reindex` (logs) · `/ops/revalue` (values)
 - **Bootstrap schema on a fresh D1:** `/ops/migrate` (the crons + reindex also apply it idempotently)
 
 ### Re-deploying from scratch (if ever needed)
 1. Fill `[env.production.vars]` from the `DeployBase` output (REGISTRY/FACTORY/DEPLOY_BLOCK + HELD_ASSETS
-   / ATOKENS / CHAINLINK). 2. `wrangler secret put ADMIN_KEY` + `wrangler secret put RPC` (keyed). 3.
-   `npm run deploy:ops`. 4. `curl -XPOST …/ops/reindex` to backfill.
+   / ATOKENS / CHAINLINK; `READ_RPC` is already there). 2. `wrangler secret put ADMIN_KEY` + `RPC` (keyed
+   archive) + `READ_RPC_BEARER` (Blockmachine). 3. `npm run deploy:ops`. 4. `curl -XPOST …/ops/reindex` to
+   backfill.
 
 ## Notes
 
@@ -68,6 +80,11 @@ Common ops:
 - Reorg buffer: indexes up to `latest − CONFIRMATIONS` (5 on Base). Cursor is stored in `ops_meta`.
 - **Revenue** (`/stats.revenue`) is the sum of the account-level `DepositFeePaid` events (the entry fee),
   indexed topic-only across the account clones and stored as `fee` rows in `ops_flows`.
+- **`/account` positions are the only LIVE read** (everything else is pre-indexed from D1). They go to
+  `READ_RPC` (Blockmachine), batched + cached (15s TTL, single-flight) + gated to indexed accounts +
+  last-good on error. NB: the app on **Base reads the portfolio _balance_ from chain** (an atomic
+  multicall) for freshness — it consumes `/account` only for the activity feed + accrued interest, so a
+  brief ops hiccup can't move the displayed balance.
 - **Governance audit** (`/ops/audit`): all 13 `ProtocolRegistry` admin events (fee/cap/whitelist/
   protocol/asset/route/factory/base-asset changes) are indexed into `ops_admin_events` — the on-chain
   record that admin powers stayed within bounds. The **current** fee is read live each pass and shown as
