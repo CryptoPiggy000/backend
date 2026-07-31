@@ -2,7 +2,7 @@ import type { Address } from "viem";
 import { createApi } from "./api";
 import { accountPositionsUsd6, enumeratePositions, makeClient, makeReadClient, type OpsConfig, type Position } from "./chain";
 import { runIndexPass } from "./indexer";
-import { type PositionsCache, withLastGood } from "./positions-cache";
+import { PositionsCache } from "./positions-cache";
 import schema from "./schema.sql";
 import { D1Store } from "./store";
 import { runValuePass } from "./value";
@@ -61,10 +61,12 @@ const authed = (req: Request, key?: string): boolean =>
 // so we don't redo it on every /account/:addr hit within a worker instance.
 let cachedVenues: { positions: Position[]; at: number } | null = null;
 
-// The last successful per-account breakdown, kept for the isolate's lifetime. If a live read throws
-// (transient RPC error), we serve this instead of blanking the portfolio — see positions-cache.ts.
+// Per-account breakdown cache. Serves within POSITIONS_TTL_MS with no network and coalesces concurrent
+// misses onto one read, so bursty /account traffic can't storm the RPC (which was 500-ing the worker).
+// TTL is short — the breakdown barely moves (Aave accrual + price drift) between polls. See positions-cache.ts.
 type PositionView = { key: string; name: string; class: "savings" | "crypto"; valueUsd: number };
-const lastGoodPositions: PositionsCache<PositionView> = new Map();
+const POSITIONS_TTL_MS = 15_000;
+const positionsCache = new PositionsCache<PositionView>(POSITIONS_TTL_MS);
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -74,7 +76,7 @@ export default {
     // exhaust the passes' archive RPC; a transient failure falls back to the account's last-good breakdown
     // instead of blanking it. Falls back to RPC when READ_RPC is unset (local/anvil).
     const positionsFor = (account: string) =>
-      withLastGood(account, lastGoodPositions, async () => {
+      positionsCache.get(account, Date.now(), async () => {
         const client = makeReadClient(env.READ_RPC ?? env.RPC, env.READ_RPC_BEARER);
         const now = Date.now();
         if (!cachedVenues || now - cachedVenues.at > 60_000) {
