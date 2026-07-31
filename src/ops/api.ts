@@ -82,10 +82,18 @@ export function createApi(store: Store, opts: ApiOptions = {}): Hono {
     const value = Number(values.get(addr) ?? 0);
     const principal = Number(principals.get(addr) ?? 0);
     const flows = await store.accountFlows(addr);
+    // Only read live positions for an address we actually index. /account is public + unauthenticated and
+    // the venue tokens (WETH / aToken / Morpho vault) are SHARED across all of Base, so reading positions
+    // for an arbitrary address would (a) fire ~10 paid RPC calls on demand — a cost-abuse vector — and
+    // (b) report that address's unrelated holdings as "positions" while value/principal read 0 from D1.
+    // Membership is decided from data already fetched (no extra query).
+    const known = values.has(addr) || principals.has(addr) || flows.length > 0;
     // Per-venue breakdown (savings vaults + crypto held assets), read live for this one account.
-    // positionsFor owns its own error handling (serves the last-good breakdown on a transient RPC
-    // failure rather than blanking the portfolio), so we don't swallow the result to [] here.
-    const positions = opts.positionsFor ? await opts.positionsFor(addr) : [];
+    // positionsFor owns the normal failure path (serves the last-good breakdown on a transient RPC error
+    // rather than blanking the portfolio). The catch here is a last-resort backstop ONLY: a positions-read
+    // fault must never 500 the whole response and take value/principal/accrued/activity (all from D1) down
+    // with it. It no longer masks the rate-limit bug — that's handled upstream in positionsFor.
+    const positions = known && opts.positionsFor ? await opts.positionsFor(addr).catch(() => []) : [];
     return c.json({
       account: addr,
       principal: usd(principal),
