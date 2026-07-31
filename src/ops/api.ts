@@ -83,7 +83,9 @@ export function createApi(store: Store, opts: ApiOptions = {}): Hono {
     const principal = Number(principals.get(addr) ?? 0);
     const flows = await store.accountFlows(addr);
     // Per-venue breakdown (savings vaults + crypto held assets), read live for this one account.
-    const positions = opts.positionsFor ? await opts.positionsFor(addr).catch(() => []) : [];
+    // positionsFor owns its own error handling (serves the last-good breakdown on a transient RPC
+    // failure rather than blanking the portfolio), so we don't swallow the result to [] here.
+    const positions = opts.positionsFor ? await opts.positionsFor(addr) : [];
     return c.json({
       account: addr,
       principal: usd(principal),

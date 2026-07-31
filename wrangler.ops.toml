@@ -61,6 +61,11 @@ crons = ["*/10 * * * *", "5,35 * * * *"]
 #   wrangler secret put RPC --env production -c wrangler.ops.toml
 # It MUST serve eth_getLogs from Cloudflare Worker egress — free public endpoints don't (publicnode
 # blocks archive, mainnet.base.org hangs the isolate); a keyed endpoint (zan.top/Alchemy/…) does.
+# RPC (above) serves the scheduled index/value passes. The bursty concurrent live /account reads go to
+# READ_RPC instead so they can't exhaust RPC's CU budget (that contention was blanking portfolios).
+# READ_RPC's key travels in an Authorization header, so the URL has no secret and lives here; the key is
+# a SECRET:  wrangler secret put READ_RPC_BEARER --env production -c wrangler.ops.toml
+READ_RPC = "https://rpc-base.blockmachine.io"
 REGISTRY = "0x451Ed81bE37303E66Bb4851e58B86B3dCFd6047a" # LIVE Base deploy (2026-07-27)
 FACTORY = "0x81af551F6346AE358966f3BF64d16d6105Ea1e8A"
 DEPLOY_BLOCK = "49169715" # registry/factory deploy block (0x2ee4533) — backfill start

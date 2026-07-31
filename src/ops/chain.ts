@@ -9,8 +9,11 @@ const ZERO = zeroAddress;
 // non-overlapping crons (wrangler.ops.toml) keep two passes from doubling it across worker instances.
 const MAX_RPS = 12;
 
-function throttledTransport(rpc: string) {
-  const inner = http(rpc)({}); // instantiate the underlying HTTP transport
+function throttledTransport(rpc: string, bearer?: string) {
+  // Blockmachine (and other keyed endpoints) authenticate via `Authorization: Bearer`, not a key in the
+  // URL — pass it through fetchOptions so the key never lands in a logged/committed URL.
+  const opts = bearer ? { fetchOptions: { headers: { Authorization: `Bearer ${bearer}` } } } : {};
+  const inner = http(rpc, opts)({}); // instantiate the underlying HTTP transport
   const minGapMs = Math.ceil(1000 / MAX_RPS);
   let last = 0;
   let queue: Promise<unknown> = Promise.resolve();
@@ -39,8 +42,8 @@ export interface OpsConfig {
   heldAssets: Address[]; // held-asset tokens to value (registry can't enumerate assets)
 }
 
-export function makeClient(rpc: string): PublicClient {
-  return createPublicClient({ transport: throttledTransport(rpc) });
+export function makeClient(rpc: string, bearer?: string): PublicClient {
+  return createPublicClient({ transport: throttledTransport(rpc, bearer) });
 }
 
 /** Canonical money: a token `raw` amount (its own `dec` decimals) priced at `price8` (8dp USD) → µUSD (6dp). */

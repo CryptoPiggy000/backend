@@ -9,6 +9,7 @@
     "dev:ops": "wrangler dev -c wrangler.ops.toml",
     "deploy:ops": "wrangler deploy -c wrangler.ops.toml --env production",
     "test:ops": "bash test/run-ops-it.sh",
+    "test:unit": "tsx test/positions-cache.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
