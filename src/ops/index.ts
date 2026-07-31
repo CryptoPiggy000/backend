@@ -1,6 +1,6 @@
 import type { Address } from "viem";
 import { createApi } from "./api";
-import { accountPositionsUsd6, enumeratePositions, makeClient, type OpsConfig, type Position } from "./chain";
+import { accountPositionsUsd6, enumeratePositions, makeClient, makeReadClient, type OpsConfig, type Position } from "./chain";
 import { runIndexPass } from "./indexer";
 import { type PositionsCache, withLastGood } from "./positions-cache";
 import schema from "./schema.sql";
@@ -75,7 +75,7 @@ export default {
     // instead of blanking it. Falls back to RPC when READ_RPC is unset (local/anvil).
     const positionsFor = (account: string) =>
       withLastGood(account, lastGoodPositions, async () => {
-        const client = makeClient(env.READ_RPC ?? env.RPC, env.READ_RPC_BEARER);
+        const client = makeReadClient(env.READ_RPC ?? env.RPC, env.READ_RPC_BEARER);
         const now = Date.now();
         if (!cachedVenues || now - cachedVenues.at > 60_000) {
           cachedVenues = { positions: await enumeratePositions(client, cfg.registry), at: now };

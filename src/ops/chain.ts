@@ -46,6 +46,19 @@ export function makeClient(rpc: string, bearer?: string): PublicClient {
   return createPublicClient({ transport: throttledTransport(rpc, bearer) });
 }
 
+/**
+ * A client for the bursty live per-account reads (Blockmachine). No RPS throttle — the provider
+ * absorbs the concurrency — and `batch: true` so viem bundles the many small reads issued in one tick
+ * into a single JSON-RPC batch request, collapsing ~20 serial round-trips into ~1 (the /account latency
+ * fix). `bearer`, if set, authenticates via an Authorization header rather than a key in the URL.
+ */
+export function makeReadClient(rpc: string, bearer?: string): PublicClient {
+  const http_ = bearer
+    ? http(rpc, { batch: true, fetchOptions: { headers: { Authorization: `Bearer ${bearer}` } } })
+    : http(rpc, { batch: true });
+  return createPublicClient({ transport: http_ });
+}
+
 /** Canonical money: a token `raw` amount (its own `dec` decimals) priced at `price8` (8dp USD) → µUSD (6dp). */
 export function usd6(raw: bigint, dec: number, price8: bigint = 100_000_000n): bigint {
   return (raw * price8 * 1_000_000n) / (10n ** BigInt(dec) * 100_000_000n);
@@ -175,14 +188,14 @@ export interface Position {
 
 export async function enumeratePositions(client: PublicClient, registry: Address): Promise<Position[]> {
   const ids = await read<Hex[]>(client, registry, registryAbi, "allPositionIds");
-  const out: Position[] = [];
-  for (const id of ids) {
-    const p = await read<{ adapterType: number; target: Address; asset: Address }>(
-      client, registry, registryAbi, "getProtocol", [id],
-    );
-    out.push({ adapter: Number(p.adapterType), target: p.target, asset: p.asset });
-  }
-  return out;
+  // Fetch every protocol together (order preserved) so a batching transport collapses the getProtocol
+  // reads into one round-trip instead of one serial round-trip per venue.
+  const protos = await Promise.all(
+    ids.map((id) =>
+      read<{ adapterType: number; target: Address; asset: Address }>(client, registry, registryAbi, "getProtocol", [id]),
+    ),
+  );
+  return protos.map((p) => ({ adapter: Number(p.adapterType), target: p.target, asset: p.asset }));
 }
 
 export async function readBaseAsset(client: PublicClient, registry: Address): Promise<Address> {
@@ -229,36 +242,49 @@ export async function accountPositionsUsd6(
   decCache: Map<string, number>,
   symCache: Map<string, string>,
 ): Promise<PositionValue[]> {
-  const out: PositionValue[] = [];
-
-  for (const p of positions) {
+  // Each position / held asset resolves to a PositionValue or null. We run them concurrently and fire
+  // each one's independent sub-reads (balance, decimals, symbol, price) together so a batching transport
+  // (makeReadClient) collapses them into ~1 round-trip. Order is preserved — positions, then held assets.
+  const positionTask = async (p: Position): Promise<PositionValue | null> => {
     if (p.adapter === ADAPTER.AAVE) {
-      const raw = await aaveValue(client, p.target, p.asset, account, cfg);
-      const v = usd6(raw, await readDecimals(client, p.asset, decCache));
-      if (v > 0n) out.push({ key: p.target.toLowerCase(), name: "Aave", class: "savings", value6: v });
-    } else if (p.adapter === ADAPTER.ERC4626) {
+      const [raw, dec] = await Promise.all([
+        aaveValue(client, p.target, p.asset, account, cfg),
+        readDecimals(client, p.asset, decCache),
+      ]);
+      const v = usd6(raw, dec);
+      return v > 0n ? { key: p.target.toLowerCase(), name: "Aave", class: "savings", value6: v } : null;
+    }
+    if (p.adapter === ADAPTER.ERC4626) {
       const shares = await balanceOf(client, p.target, account);
-      if (shares === 0n) continue;
-      const assets = await read<bigint>(client, p.target, erc4626Abi, "convertToAssets", [shares]);
-      const v = usd6(assets, await readDecimals(client, p.asset, decCache));
-      if (v > 0n) {
-        out.push({ key: p.target.toLowerCase(), name: await symbolOf(client, p.target, symCache), class: "savings", value6: v });
-      }
+      if (shares === 0n) return null; // convertToAssets depends on shares — no read to make
+      const [assets, dec, name] = await Promise.all([
+        read<bigint>(client, p.target, erc4626Abi, "convertToAssets", [shares]),
+        readDecimals(client, p.asset, decCache),
+        symbolOf(client, p.target, symCache),
+      ]);
+      const v = usd6(assets, dec);
+      return v > 0n ? { key: p.target.toLowerCase(), name, class: "savings", value6: v } : null;
     }
-  }
+    return null;
+  };
 
-  for (const token of cfg.heldAssets) {
-    const raw = await balanceOf(client, token, account);
-    if (raw === 0n) continue;
-    const price8 = await priceUsd8(client, token, cfg);
-    if (price8 === 0n) continue;
-    const v = usd6(raw, await readDecimals(client, token, decCache), price8);
-    if (v > 0n) {
-      out.push({ key: token.toLowerCase(), name: await symbolOf(client, token, symCache), class: "crypto", value6: v });
-    }
-  }
+  const heldTask = async (token: Address): Promise<PositionValue | null> => {
+    const [raw, price8, dec, name] = await Promise.all([
+      balanceOf(client, token, account),
+      priceUsd8(client, token, cfg),
+      readDecimals(client, token, decCache),
+      symbolOf(client, token, symCache),
+    ]);
+    if (raw === 0n || price8 === 0n) return null; // no holding, or no known price → not a position
+    const v = usd6(raw, dec, price8);
+    return v > 0n ? { key: token.toLowerCase(), name, class: "crypto", value6: v } : null;
+  };
 
-  return out;
+  const resolved = await Promise.all([
+    ...positions.map(positionTask),
+    ...cfg.heldAssets.map(heldTask),
+  ]);
+  return resolved.filter((x): x is PositionValue => x !== null);
 }
 
 /** Live portfolio value of one account, in µUSD: idle base asset + Aave + vaults + held×price. */

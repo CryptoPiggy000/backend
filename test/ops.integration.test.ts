@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import type { Address } from "viem";
-import { makeClient, type OpsConfig } from "../src/ops/chain";
+import { accountPositionsUsd6, enumeratePositions, makeClient, type OpsConfig } from "../src/ops/chain";
 import { runIndexPass } from "../src/ops/indexer";
 import { runValuePass } from "../src/ops/value";
 import { createApi } from "../src/ops/api";
@@ -76,6 +76,23 @@ async function main() {
   const acct2 = env("ACCT2").toLowerCase();
   eq(values.get(acct1), M(997), "acct1 value = $997 (idle 500 + aave 297 + wstETH 200)");
   eq(values.get(acct2), M(995), "acct2 value = $995 (idle 700 + aave 295)");
+
+  // Per-venue breakdown behind /account/:addr — the live-read path (AAVE + held-asset, no idle base).
+  // This guards the exact positions the client renders across the multicall refactor.
+  console.log("positions breakdown (accountPositionsUsd6):");
+  const positions = await enumeratePositions(client, cfg.registry);
+  const p1 = await accountPositionsUsd6(client, acct1 as Address, cfg, positions, new Map(), new Map());
+  eq(p1.length, 2, "acct1 breakdown has 2 positions (Aave + wstETH; idle base excluded)");
+  const aave1 = p1.find((p) => p.name === "Aave");
+  eq(aave1?.class, "savings", "acct1 Aave position is savings");
+  eq(aave1?.value6, 297_000000n, "acct1 Aave value = $297");
+  const crypto1 = p1.find((p) => p.class === "crypto");
+  eq(crypto1?.value6, 200_000000n, "acct1 held-asset (wstETH) value = $200");
+  ok(!crypto1?.name.includes("…"), "acct1 held-asset symbol resolved (not an address fallback)");
+
+  const p2 = await accountPositionsUsd6(client, acct2 as Address, cfg, positions, new Map(), new Map());
+  eq(p2.length, 1, "acct2 breakdown has 1 position (Aave only)");
+  eq(p2[0]?.value6, 295_000000n, "acct2 Aave value = $295");
 
   console.log("JSON API:");
   const app = createApi(store, { adminKey: "test-key", corsOrigin: "*" });
