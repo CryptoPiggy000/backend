@@ -94,11 +94,16 @@ export function createApi(store: Store, opts: ApiOptions = {}): Hono {
     // fault must never 500 the whole response and take value/principal/accrued/activity (all from D1) down
     // with it. It no longer masks the rate-limit bug — that's handled upstream in positionsFor.
     const positions = known && opts.positionsFor ? await opts.positionsFor(addr).catch(() => []) : [];
+    // "Interest earned" = value of what's DEPLOYED − its cost basis. Use the live positions' value
+    // (savings + crypto), NOT `value` — `value` also includes idle USDC sitting in the account, which is
+    // not a gain, so `value − principal` mislabels idle cash as accrued interest. `principal` is the
+    // net-into-positions cost basis, so positionsValue − principal is the true gain/loss on deployed money.
+    const deployedUsd = positions.reduce((sum, p) => sum + p.valueUsd, 0);
     return c.json({
       account: addr,
       principal: usd(principal),
       value: usd(value),
-      accrued: usd(Math.max(0, value - principal)), // realized-so-far interest = live value − cost basis
+      accrued: Math.max(0, deployedUsd - usd(principal)),
       positions,
       activity: flows
         .map((f) => ({ kind: f.kind, amount: usd(f.amount), ts: f.ts, txHash: f.tx_hash }))
