@@ -5,7 +5,7 @@ import { cors } from "hono/cors";
 import { mockApp } from "./mock";
 import { callPlanner, toStrategy, asTerm, PRESETS, PRESET_RISK, NOMINAL_TOWORK } from "./engine";
 import { bestQuote } from "./aggregators";
-import { withSponsorshipPolicy } from "./gasless";
+import { consumeQuota, validateSponsorship, withSponsorshipPolicy } from "./gasless";
 
 interface Env {
   ENGINE_URL: string;   // DEV: engine's wrangler dev URL
@@ -19,6 +19,14 @@ interface Env {
   PIMLICO_API_KEY?: string; // Pimlico API key (secret) — injected server-side by the /gasless/rpc proxy
   PIMLICO_SPONSORSHIP_POLICY_ID?: string; // Pimlico sponsorship policy — stamped server-side so the
                             // dashboard spend caps bind; unset → client-controlled (see gasless.ts)
+  // We fund the gas, so sponsorship is gated on "targets OUR contracts" + a per-sender daily quota.
+  // Unset GASLESS_FACTORY disables both checks (dev/mock).
+  DB?: D1Database;               // quota counter (shared cryptopiggy_market)
+  GASLESS_FACTORY?: string;      // AccountFactory — createAccount + derives the caller's own account
+  GASLESS_IMPL?: string;         // SmartInvestmentAccount impl the factory clones
+  GASLESS_USDC?: string;         // base asset (withdraw-elsewhere transfer)
+  GASLESS_SALT?: string;         // userSalt the client uses (default ZERO_SALT)
+  GASLESS_DAILY_LIMIT?: string;  // sponsored transactions per sender per UTC day (default 10)
 }
 
 // Chains the gasless proxy is willing to forward to Pimlico for. 8453 = Base (prod), 11155111 = Sepolia (dev).
@@ -27,6 +35,10 @@ const PIMLICO_CHAINS = new Set<number>([8453, 11155111]);
 // JSON-RPC methods the app's permissionless client actually uses against the Pimlico endpoint (paymaster
 // ERC-7677 + pimlico bundler extras + standard bundler/client). Everything else is rejected so this
 // proxy never becomes a generic open relay for Pimlico's paid infrastructure.
+// The calls that yield REAL sponsorship — these are gated. pm_getPaymasterStubData is exempt: it returns
+// dummy data for gas estimation and commits us to nothing.
+const SPONSORING_METHODS = new Set(["pm_getPaymasterData", "pm_sponsorUserOperation"]);
+
 const PIMLICO_METHODS = new Set([
   // paymaster (ERC-7677)
   "pm_getPaymasterStubData",
@@ -132,6 +144,37 @@ app.post("/gasless/rpc", async (c) => {
   }
   if (!PIMLICO_METHODS.has(body.method)) {
     return c.json({ error: { code: "method_not_allowed", message: `method ${body.method} not proxied` } }, 403);
+  }
+
+  // We pay the gas, so before handing out real sponsorship: (1) the op must target OUR contracts, and
+  // (2) the sender must be inside its daily quota. The stub call is exempt — it returns dummy data for
+  // gas estimation and commits us to nothing. See gasless.ts for why each control exists.
+  if (SPONSORING_METHODS.has(body.method) && c.env.GASLESS_FACTORY) {
+    const userOp = (Array.isArray(body.params) ? body.params[0] : undefined) as
+      | { sender?: unknown; callData?: unknown }
+      | undefined;
+    const cfg = {
+      factory: c.env.GASLESS_FACTORY as `0x${string}`,
+      implementation: c.env.GASLESS_IMPL as `0x${string}`,
+      usdc: c.env.GASLESS_USDC as `0x${string}`,
+      salt: (c.env.GASLESS_SALT ?? `0x${"0".repeat(64)}`) as `0x${string}`,
+    };
+    const check = validateSponsorship(userOp ?? {}, cfg);
+    if (!check.ok) {
+      return c.json({ error: { code: "not_sponsored", message: check.error } }, 403);
+    }
+    const quota = await consumeQuota(
+      c.env.DB,
+      String((userOp as { sender: string }).sender),
+      Number(c.env.GASLESS_DAILY_LIMIT ?? 10),
+      Date.now(),
+    );
+    if (!quota.ok) {
+      return c.json(
+        { error: { code: "quota_exceeded", message: `daily sponsored-transaction limit reached (${quota.limit})` } },
+        429,
+      );
+    }
   }
 
   const upstream = new URL(`https://api.pimlico.io/v2/${chain}/rpc`);

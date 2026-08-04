@@ -36,6 +36,22 @@ MOCK = "true"
 binding = "PLANNER" # → cryptopiggy-planner-production (private)
 service = "cryptopiggy-planner-production"
 
+# Backs the per-sender daily gasless quota (table `gasless_quota`, created on demand). Same shared store
+# as the ops indexer / engine; the `gasless_` prefix keeps it clear of their tables.
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "cryptopiggy_market"
+database_id = "d3a2a0c2-7ed2-44de-969f-6fe4255452c0"
+
 [env.production.vars]
 CORS_ORIGIN = "*" # public suggestion-only market data; tighten to the web origin once it's deployed
 MOCK = "true"
+# WE fund the gas, so /gasless/rpc only sponsors ops that (a) target OUR contracts and (b) are inside the
+# sender's daily quota. Targets allowed: the factory (createAccount), the caller's OWN account — derived
+# locally via CREATE2, no RPC — and USDC (withdraw-elsewhere transfer). Everything downstream of
+# executePlan is already constrained on-chain by the registry's approved protocols/routes.
+# Unset GASLESS_FACTORY disables both checks. Addresses: contracts/DEPLOYMENTS.md.
+GASLESS_FACTORY = "0x81af551F6346AE358966f3BF64d16d6105Ea1e8A"
+GASLESS_IMPL = "0x866fd7a8ea0d4d4fd0fabc42312074153c44d119" # SmartInvestmentAccount impl the factory clones
+GASLESS_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+GASLESS_DAILY_LIMIT = "10" # sponsored transactions per sender per UTC day

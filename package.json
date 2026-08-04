@@ -12,7 +12,8 @@
     "test:unit": "tsx test/positions-cache.test.ts",
     "test:unit-api": "tsx test/account-resilience.test.ts",
     "typecheck": "tsc --noEmit",
-    "test:gasless": "tsx test/gasless.test.ts"
+    "test:gasless": "tsx test/gasless.test.ts",
+    "test:gasless-guard": "tsx test/gasless-guard.test.ts"
   },
   "dependencies": {
     "hono": "^4.6.14",
