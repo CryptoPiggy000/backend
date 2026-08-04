@@ -11,7 +11,8 @@
     "test:ops": "bash test/run-ops-it.sh",
     "test:unit": "tsx test/positions-cache.test.ts",
     "test:unit-api": "tsx test/account-resilience.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:gasless": "tsx test/gasless.test.ts"
   },
   "dependencies": {
     "hono": "^4.6.14",

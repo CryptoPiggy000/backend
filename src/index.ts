@@ -5,6 +5,7 @@ import { cors } from "hono/cors";
 import { mockApp } from "./mock";
 import { callPlanner, toStrategy, asTerm, PRESETS, PRESET_RISK, NOMINAL_TOWORK } from "./engine";
 import { bestQuote } from "./aggregators";
+import { withSponsorshipPolicy } from "./gasless";
 
 interface Env {
   ENGINE_URL: string;   // DEV: engine's wrangler dev URL
@@ -16,6 +17,8 @@ interface Env {
   ZEROX_API_KEY?: string;   // 0x Swap API v2 key (secret) — for /market/quote
   KYBER_CLIENT_ID?: string; // KyberSwap client id (rate-limit identifier)
   PIMLICO_API_KEY?: string; // Pimlico API key (secret) — injected server-side by the /gasless/rpc proxy
+  PIMLICO_SPONSORSHIP_POLICY_ID?: string; // Pimlico sponsorship policy — stamped server-side so the
+                            // dashboard spend caps bind; unset → client-controlled (see gasless.ts)
 }
 
 // Chains the gasless proxy is willing to forward to Pimlico for. 8453 = Base (prod), 11155111 = Sepolia (dev).
@@ -133,10 +136,13 @@ app.post("/gasless/rpc", async (c) => {
 
   const upstream = new URL(`https://api.pimlico.io/v2/${chain}/rpc`);
   upstream.searchParams.set("apikey", apiKey);
+  // Stamp OUR sponsorship policy server-side, overriding whatever the client sent. The dashboard's spend
+  // limits are the real guard against paymaster drain, and a policy the caller can omit isn't a guard at
+  // all — see gasless.ts. Unset → passthrough (no behaviour change).
   const res = await fetch(upstream, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify(withSponsorshipPolicy(body, c.env.PIMLICO_SPONSORSHIP_POLICY_ID)),
   });
   // Return the raw JSON-RPC envelope (Pimlico's error shapes are JSON-RPC, not the API's {error}) so the
   // permissionless/viem client can parse status codes and error codes the way it expects.
