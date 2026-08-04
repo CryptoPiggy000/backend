@@ -54,4 +54,4 @@ MOCK = "true"
 GASLESS_FACTORY = "0x81af551F6346AE358966f3BF64d16d6105Ea1e8A"
 GASLESS_IMPL = "0x866fd7a8ea0d4d4fd0fabc42312074153c44d119" # SmartInvestmentAccount impl the factory clones
 GASLESS_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
-GASLESS_DAILY_LIMIT = "10" # sponsored transactions per sender per UTC day
+GASLESS_DAILY_LIMIT = "15" # sponsored transactions per sender per UTC day
