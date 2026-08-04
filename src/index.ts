@@ -15,7 +15,32 @@ interface Env {
   MOCK?: string;        // DEV: "true" → serve the in-repo mock engine (no real engine yet)
   ZEROX_API_KEY?: string;   // 0x Swap API v2 key (secret) — for /market/quote
   KYBER_CLIENT_ID?: string; // KyberSwap client id (rate-limit identifier)
+  PIMLICO_API_KEY?: string; // Pimlico API key (secret) — injected server-side by the /gasless/rpc proxy
 }
+
+// Chains the gasless proxy is willing to forward to Pimlico for. 8453 = Base (prod), 11155111 = Sepolia (dev).
+const PIMLICO_CHAINS = new Set<number>([8453, 11155111]);
+
+// JSON-RPC methods the app's permissionless client actually uses against the Pimlico endpoint (paymaster
+// ERC-7677 + pimlico bundler extras + standard bundler/client). Everything else is rejected so this
+// proxy never becomes a generic open relay for Pimlico's paid infrastructure.
+const PIMLICO_METHODS = new Set([
+  // paymaster (ERC-7677)
+  "pm_getPaymasterStubData",
+  "pm_getPaymasterData",
+  "pm_sponsorUserOperation",
+  "pm_validateSponsorshipPolicies",
+  // pimlico-specific bundler methods
+  "pimlico_getUserOperationGasPrice",
+  "pimlico_getUserOperationStatus",
+  // standard bundler + client methods
+  "eth_chainId",
+  "eth_supportedEntryPoints",
+  "eth_estimateUserOperationGas",
+  "eth_sendUserOperation",
+  "eth_getUserOperationByHash",
+  "eth_getUserOperationReceipt",
+]);
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -82,6 +107,43 @@ app.post("/market/quote", async (c) => {
   });
   if (!result) return c.json({ error: { code: "no_route", message: "no aggregator route available" } }, 502);
   return c.json({ ...result.best, quotedBy: result.all.map((q) => ({ provider: q.provider, buyAmount: q.buyAmount })) });
+});
+
+// ── Pimlico gasless proxy ─────────────────────────────────────────────────────────
+// The app's permissionless client points its paymaster + bundler transport at this route (web
+// `src/lib/chain.ts` → `{NEXT_PUBLIC_API_URL}/gasless/rpc`). The Pimlico API key stays server-side as a
+// secret — the browser never sees it. The method + chain allowlists keep this from becoming an open relay;
+// the Pimlico sponsorship policy limits (dashboard) remain the financial backstop against paymaster drain.
+app.post("/gasless/rpc", async (c) => {
+  const apiKey = c.env.PIMLICO_API_KEY;
+  if (!apiKey) return c.json({ error: { code: "not_configured", message: "Pimlico proxy not configured" } }, 503);
+
+  const chain = Number(c.req.query("chain"));
+  if (!PIMLICO_CHAINS.has(chain)) {
+    return c.json({ error: { code: "unsupported_chain", message: "chain not allowed" } }, 400);
+  }
+
+  const body = (await c.req.json().catch(() => null)) as { method?: string; id?: unknown; params?: unknown } | null;
+  if (!body || typeof body.method !== "string") {
+    return c.json({ error: { code: "bad_request", message: "JSON-RPC body required" } }, 400);
+  }
+  if (!PIMLICO_METHODS.has(body.method)) {
+    return c.json({ error: { code: "method_not_allowed", message: `method ${body.method} not proxied` } }, 403);
+  }
+
+  const upstream = new URL(`https://api.pimlico.io/v2/${chain}/rpc`);
+  upstream.searchParams.set("apikey", apiKey);
+  const res = await fetch(upstream, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  // Return the raw JSON-RPC envelope (Pimlico's error shapes are JSON-RPC, not the API's {error}) so the
+  // permissionless/viem client can parse status codes and error codes the way it expects.
+  return new Response(res.body, {
+    status: res.status,
+    headers: { "content-type": "application/json" },
+  });
 });
 
 app.all("*", async (c) => {

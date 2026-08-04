@@ -25,6 +25,9 @@ MOCK = "true"
 #     service binding, so the app's /market/* calls the real v2 engine over the wire. The residual
 #     routes (/me/portfolio, /operations/*) stay on the mock — the old single-engine was never built and
 #     the real app executes CLIENT-side; MOCK=true is only the fallback here. ---
+# SECRETS (set via `wrangler secret put --env production`, NOT here): ZEROX_API_KEY, PIMLICO_API_KEY.
+#     PIMLICO_API_KEY backs the /gasless/rpc proxy (the browser's paymaster+bundler endpoint); keep the
+#     Pimlico sponsorship policy's spending limits tight — that is the real guard against paymaster drain.
 [[env.production.services]]
 binding = "PLANNER" # → cryptopiggy-planner-production (private)
 service = "cryptopiggy-planner-production"
