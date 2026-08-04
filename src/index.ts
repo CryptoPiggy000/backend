@@ -26,7 +26,7 @@ interface Env {
   GASLESS_IMPL?: string;         // SmartInvestmentAccount impl the factory clones
   GASLESS_USDC?: string;         // base asset (withdraw-elsewhere transfer)
   GASLESS_SALT?: string;         // userSalt the client uses (default ZERO_SALT)
-  GASLESS_DAILY_LIMIT?: string;  // sponsored transactions per sender per UTC day (default 15)
+  GASLESS_DAILY_LIMIT?: string;  // sponsored transactions per sender per UTC day (default 10)
 }
 
 // Chains the gasless proxy is willing to forward to Pimlico for. 8453 = Base (prod), 11155111 = Sepolia (dev).
@@ -166,7 +166,7 @@ app.post("/gasless/rpc", async (c) => {
     const quota = await consumeQuota(
       c.env.DB,
       String((userOp as { sender: string }).sender),
-      Number(c.env.GASLESS_DAILY_LIMIT ?? 15),
+      Number(c.env.GASLESS_DAILY_LIMIT ?? 10),
       Date.now(),
     );
     if (!quota.ok) {
