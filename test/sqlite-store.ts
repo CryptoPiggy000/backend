@@ -92,6 +92,32 @@ export class SqliteStore implements Store {
     return new Map(rows.map((x) => [x.account, x.value_usd]));
   }
 
+  async upsertDeployed(account: string, deployedUsd: string, block: number, ts: number): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO ops_account_deployed (account, deployed_usd, block, ts) VALUES (?, ?, ?, ?)
+         ON CONFLICT(account, block) DO UPDATE SET deployed_usd = excluded.deployed_usd, ts = excluded.ts`,
+      )
+      .run(account, deployedUsd, block, ts);
+  }
+
+  async latestDeployed(): Promise<Map<string, string>> {
+    const rows = this.db
+      .prepare(
+        `SELECT d.account AS account, d.deployed_usd AS deployed_usd FROM ops_account_deployed d
+         JOIN (SELECT account, MAX(block) AS mb FROM ops_account_deployed GROUP BY account) m
+         ON d.account = m.account AND d.block = m.mb`,
+      )
+      .all() as { account: string; deployed_usd: string }[];
+    return new Map(rows.map((x) => [x.account, x.deployed_usd]));
+  }
+
+  async accountDeployed(account: string): Promise<import("../src/ops/store").DeployedRow[]> {
+    return this.db
+      .prepare(`SELECT deployed_usd, block, ts FROM ops_account_deployed WHERE account = ? ORDER BY block ASC`)
+      .all(account) as import("../src/ops/store").DeployedRow[];
+  }
+
   async aggregate(): Promise<{ users: number; totalDeposited: string; totalWithdrawn: string; totalFees: string }> {
     const users = (this.db.prepare(`SELECT COUNT(*) AS n FROM ops_accounts`).get() as { n: number }).n;
     const sum = (kind: string) =>

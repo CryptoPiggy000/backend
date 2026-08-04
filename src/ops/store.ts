@@ -27,6 +27,12 @@ export interface ValueRow {
   ts: number | null;
 }
 
+export interface DeployedRow {
+  deployed_usd: string;
+  block: number;
+  ts: number | null;
+}
+
 export interface AdminEventRow {
   tx_hash: string;
   log_index: number;
@@ -49,6 +55,9 @@ export interface Store {
   listAccounts(): Promise<AccountRow[]>;
   upsertValue(account: string, valueUsd: string, block: number, ts: number): Promise<void>;
   latestValues(): Promise<Map<string, string>>; // account → value_usd
+  upsertDeployed(account: string, deployedUsd: string, block: number, ts: number): Promise<void>;
+  latestDeployed(): Promise<Map<string, string>>; // account → deployed_usd (positions only, at cursor block)
+  accountDeployed(account: string): Promise<DeployedRow[]>;
   aggregate(): Promise<{ users: number; totalDeposited: string; totalWithdrawn: string; totalFees: string }>;
   accountPrincipals(): Promise<Map<string, string>>; // account → net principal (µUSD, deposits − withdraws)
   accountFlows(account: string): Promise<FlowRow[]>;
@@ -159,6 +168,35 @@ export class D1Store implements Store {
       )
       .all<{ account: string; value_usd: string }>();
     return new Map((r.results ?? []).map((x) => [x.account, x.value_usd]));
+  }
+
+  async upsertDeployed(account: string, deployedUsd: string, block: number, ts: number): Promise<void> {
+    await this.db
+      .prepare(
+        `INSERT INTO ops_account_deployed (account, deployed_usd, block, ts) VALUES (?, ?, ?, ?)
+         ON CONFLICT(account, block) DO UPDATE SET deployed_usd = excluded.deployed_usd, ts = excluded.ts`,
+      )
+      .bind(account, deployedUsd, block, ts)
+      .run();
+  }
+
+  async latestDeployed(): Promise<Map<string, string>> {
+    const r = await this.db
+      .prepare(
+        `SELECT d.account AS account, d.deployed_usd AS deployed_usd FROM ops_account_deployed d
+         JOIN (SELECT account, MAX(block) AS mb FROM ops_account_deployed GROUP BY account) m
+         ON d.account = m.account AND d.block = m.mb`,
+      )
+      .all<{ account: string; deployed_usd: string }>();
+    return new Map((r.results ?? []).map((x) => [x.account, x.deployed_usd]));
+  }
+
+  async accountDeployed(account: string): Promise<DeployedRow[]> {
+    const r = await this.db
+      .prepare(`SELECT deployed_usd, block, ts FROM ops_account_deployed WHERE account = ? ORDER BY block ASC`)
+      .bind(account)
+      .all<DeployedRow>();
+    return r.results ?? [];
   }
 
   async aggregate(): Promise<{ users: number; totalDeposited: string; totalWithdrawn: string; totalFees: string }> {

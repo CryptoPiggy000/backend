@@ -78,9 +78,14 @@ export function createApi(store: Store, opts: ApiOptions = {}): Hono {
   // already-public activity.
   app.get("/account/:addr", async (c) => {
     const addr = c.req.param("addr").toLowerCase();
-    const [values, principals] = await Promise.all([store.latestValues(), store.accountPrincipals()]);
+    const [values, deployed, principals] = await Promise.all([
+      store.latestValues(),
+      store.latestDeployed(),
+      store.accountPrincipals(),
+    ]);
     const value = Number(values.get(addr) ?? 0);
     const principal = Number(principals.get(addr) ?? 0);
+    const deployedSnapshot = Number(deployed.get(addr) ?? 0);
     const flows = await store.accountFlows(addr);
     // Only read live positions for an address we actually index. /account is public + unauthenticated and
     // the venue tokens (WETH / aToken / Morpho vault) are SHARED across all of Base, so reading positions
@@ -94,16 +99,17 @@ export function createApi(store: Store, opts: ApiOptions = {}): Hono {
     // fault must never 500 the whole response and take value/principal/accrued/activity (all from D1) down
     // with it. It no longer masks the rate-limit bug — that's handled upstream in positionsFor.
     const positions = known && opts.positionsFor ? await opts.positionsFor(addr).catch(() => []) : [];
-    // "Interest earned" = value of what's DEPLOYED − its cost basis. Use the live positions' value
-    // (savings + crypto), NOT `value` — `value` also includes idle USDC sitting in the account, which is
-    // not a gain, so `value − principal` mislabels idle cash as accrued interest. `principal` is the
-    // net-into-positions cost basis, so positionsValue − principal is the true gain/loss on deployed money.
-    const deployedUsd = positions.reduce((sum, p) => sum + p.valueUsd, 0);
+    // "Interest earned" = DEPLOYED value − cost basis. Both come from D1 at the SAME block (the value
+    // pass snapshots deployed at the index cursor, so a deposit lands in `deployed` and `principal`
+    // together): a just-arrived deposit — visible to a fresh chain read but not yet indexed — can never
+    // show up as fake interest. The live `positions` above are display-only (fresh), NOT used for accrued.
+    // And deployed (not `value`) excludes idle USDC, so idle cash isn't mislabelled as interest either.
     return c.json({
       account: addr,
       principal: usd(principal),
       value: usd(value),
-      accrued: Math.max(0, deployedUsd - usd(principal)),
+      deployed: usd(deployedSnapshot),
+      accrued: Math.max(0, usd(deployedSnapshot) - usd(principal)),
       positions,
       activity: flows
         .map((f) => ({ kind: f.kind, amount: usd(f.amount), ts: f.ts, txHash: f.tx_hash }))

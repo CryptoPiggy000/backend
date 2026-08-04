@@ -130,8 +130,8 @@ export async function blockTimestamps(client: PublicClient, blocks: bigint[]): P
   return m;
 }
 
-async function read<T>(client: PublicClient, address: Address, abi: Abi, fn: string, args: unknown[] = []): Promise<T> {
-  return client.readContract({ address, abi, functionName: fn, args }) as Promise<T>;
+async function read<T>(client: PublicClient, address: Address, abi: Abi, fn: string, args: unknown[] = [], blockNumber?: bigint): Promise<T> {
+  return client.readContract({ address, abi, functionName: fn, args, ...(blockNumber !== undefined ? { blockNumber } : {}) }) as Promise<T>;
 }
 
 export async function readDecimals(client: PublicClient, token: Address, cache: Map<string, number>): Promise<number> {
@@ -143,23 +143,23 @@ export async function readDecimals(client: PublicClient, token: Address, cache: 
   return d;
 }
 
-async function balanceOf(client: PublicClient, token: Address, account: Address): Promise<bigint> {
+async function balanceOf(client: PublicClient, token: Address, account: Address, blockNumber?: bigint): Promise<bigint> {
   try {
-    return await read<bigint>(client, token, erc20Abi, "balanceOf", [account]);
+    return await read<bigint>(client, token, erc20Abi, "balanceOf", [account], blockNumber);
   } catch {
     return 0n; // a missing/incompatible token contributes nothing rather than failing the pass
   }
 }
 
 /** Held-asset USD price as an 8dp integer. Override (dev) wins; else the Chainlink feed; else 0 (skip). */
-async function priceUsd8(client: PublicClient, token: Address, cfg: OpsConfig): Promise<bigint> {
+async function priceUsd8(client: PublicClient, token: Address, cfg: OpsConfig, blockNumber?: bigint): Promise<bigint> {
   const k = token.toLowerCase();
   if (cfg.priceOverrides[k] != null) return BigInt(Math.round(cfg.priceOverrides[k] * 1e8));
   const feed = cfg.chainlink[k];
   if (!feed) return 0n;
   try {
     const [, answer] = await read<[bigint, bigint, bigint, bigint, bigint]>(
-      client, feed as Address, chainlinkAbi, "latestRoundData",
+      client, feed as Address, chainlinkAbi, "latestRoundData", [], blockNumber,
     );
     const fdec = Number(await read<bigint>(client, feed as Address, chainlinkAbi, "decimals"));
     if (answer <= 0n) return 0n;
@@ -170,11 +170,11 @@ async function priceUsd8(client: PublicClient, token: Address, cfg: OpsConfig): 
 }
 
 /** The account's Aave position value: aToken balance on Base (accrues), else the mock pool's supplied(). */
-async function aaveValue(client: PublicClient, pool: Address, asset: Address, account: Address, cfg: OpsConfig): Promise<bigint> {
+async function aaveValue(client: PublicClient, pool: Address, asset: Address, account: Address, cfg: OpsConfig, blockNumber?: bigint): Promise<bigint> {
   const aToken = cfg.aTokens[`${pool.toLowerCase()}:${asset.toLowerCase()}`];
-  if (aToken) return balanceOf(client, aToken as Address, account);
+  if (aToken) return balanceOf(client, aToken as Address, account, blockNumber);
   try {
-    return await read<bigint>(client, pool, aavePoolAbi, "supplied", [account, asset]);
+    return await read<bigint>(client, pool, aavePoolAbi, "supplied", [account, asset], blockNumber);
   } catch {
     return 0n;
   }
@@ -186,20 +186,20 @@ export interface Position {
   asset: Address;
 }
 
-export async function enumeratePositions(client: PublicClient, registry: Address): Promise<Position[]> {
-  const ids = await read<Hex[]>(client, registry, registryAbi, "allPositionIds");
+export async function enumeratePositions(client: PublicClient, registry: Address, blockNumber?: bigint): Promise<Position[]> {
+  const ids = await read<Hex[]>(client, registry, registryAbi, "allPositionIds", [], blockNumber);
   // Fetch every protocol together (order preserved) so a batching transport collapses the getProtocol
   // reads into one round-trip instead of one serial round-trip per venue.
   const protos = await Promise.all(
     ids.map((id) =>
-      read<{ adapterType: number; target: Address; asset: Address }>(client, registry, registryAbi, "getProtocol", [id]),
+      read<{ adapterType: number; target: Address; asset: Address }>(client, registry, registryAbi, "getProtocol", [id], blockNumber),
     ),
   );
   return protos.map((p) => ({ adapter: Number(p.adapterType), target: p.target, asset: p.asset }));
 }
 
-export async function readBaseAsset(client: PublicClient, registry: Address): Promise<Address> {
-  return read<Address>(client, registry, registryAbi, "baseAsset");
+export async function readBaseAsset(client: PublicClient, registry: Address, blockNumber?: bigint): Promise<Address> {
+  return read<Address>(client, registry, registryAbi, "baseAsset", [], blockNumber);
 }
 
 /** The current deposit fee straight from the registry — the live source of truth for `/stats`. */
@@ -241,6 +241,7 @@ export async function accountPositionsUsd6(
   positions: Position[],
   decCache: Map<string, number>,
   symCache: Map<string, string>,
+  blockNumber?: bigint,
 ): Promise<PositionValue[]> {
   // Each position / held asset resolves to a PositionValue or null. We run them concurrently and fire
   // each one's independent sub-reads (balance, decimals, symbol, price) together so a batching transport
@@ -248,17 +249,17 @@ export async function accountPositionsUsd6(
   const positionTask = async (p: Position): Promise<PositionValue | null> => {
     if (p.adapter === ADAPTER.AAVE) {
       const [raw, dec] = await Promise.all([
-        aaveValue(client, p.target, p.asset, account, cfg),
+        aaveValue(client, p.target, p.asset, account, cfg, blockNumber),
         readDecimals(client, p.asset, decCache),
       ]);
       const v = usd6(raw, dec);
       return v > 0n ? { key: p.target.toLowerCase(), name: "Aave", class: "savings", value6: v } : null;
     }
     if (p.adapter === ADAPTER.ERC4626) {
-      const shares = await balanceOf(client, p.target, account);
+      const shares = await balanceOf(client, p.target, account, blockNumber);
       if (shares === 0n) return null; // convertToAssets depends on shares — no read to make
       const [assets, dec, name] = await Promise.all([
-        read<bigint>(client, p.target, erc4626Abi, "convertToAssets", [shares]),
+        read<bigint>(client, p.target, erc4626Abi, "convertToAssets", [shares], blockNumber),
         readDecimals(client, p.asset, decCache),
         symbolOf(client, p.target, symCache),
       ]);
@@ -270,8 +271,8 @@ export async function accountPositionsUsd6(
 
   const heldTask = async (token: Address): Promise<PositionValue | null> => {
     const [raw, price8, dec, name] = await Promise.all([
-      balanceOf(client, token, account),
-      priceUsd8(client, token, cfg),
+      balanceOf(client, token, account, blockNumber),
+      priceUsd8(client, token, cfg, blockNumber),
       readDecimals(client, token, decCache),
       symbolOf(client, token, symCache),
     ]);
@@ -295,32 +296,33 @@ export async function accountValueUsd6(
   positions: Position[],
   base: Address,
   decCache: Map<string, number>,
+  blockNumber?: bigint,
 ): Promise<bigint> {
   let total = 0n;
 
   // idle base asset (USDC assumed $1); skip if the registry has no base asset wired yet
   if (base && base !== ZERO) {
     const baseDec = await readDecimals(client, base, decCache);
-    total += usd6(await balanceOf(client, base, account), baseDec);
+    total += usd6(await balanceOf(client, base, account, blockNumber), baseDec);
   }
 
   // protocol positions
   for (const p of positions) {
     if (p.adapter === ADAPTER.AAVE) {
-      const raw = await aaveValue(client, p.target, p.asset, account, cfg);
+      const raw = await aaveValue(client, p.target, p.asset, account, cfg, blockNumber);
       total += usd6(raw, await readDecimals(client, p.asset, decCache));
     } else if (p.adapter === ADAPTER.ERC4626) {
-      const shares = await balanceOf(client, p.target, account);
-      const assets = shares === 0n ? 0n : await read<bigint>(client, p.target, erc4626Abi, "convertToAssets", [shares]);
+      const shares = await balanceOf(client, p.target, account, blockNumber);
+      const assets = shares === 0n ? 0n : await read<bigint>(client, p.target, erc4626Abi, "convertToAssets", [shares], blockNumber);
       total += usd6(assets, await readDecimals(client, p.asset, decCache));
     }
   }
 
   // held assets (config-supplied set; priced via Chainlink / override)
   for (const token of cfg.heldAssets) {
-    const raw = await balanceOf(client, token, account);
+    const raw = await balanceOf(client, token, account, blockNumber);
     if (raw === 0n) continue;
-    const price8 = await priceUsd8(client, token, cfg);
+    const price8 = await priceUsd8(client, token, cfg, blockNumber);
     if (price8 === 0n) continue; // unknown price → skip rather than mis-value or crash
     total += usd6(raw, await readDecimals(client, token, decCache), price8);
   }

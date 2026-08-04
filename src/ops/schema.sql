@@ -32,6 +32,19 @@ CREATE TABLE IF NOT EXISTS ops_account_value (
   PRIMARY KEY (account, block)
 );
 
+-- DEPLOYED (positions-only) value snapshots: Aave + vaults + held assets, no idle USDC. Written by the
+-- value pass at the INDEX CURSOR block, so a snapshot is always consistent with the flows' cost basis
+-- (principal): a deposit lands in BOTH at the same time, so `deployed − principal` can never show a
+-- just-arrived deposit as fake interest.
+CREATE TABLE IF NOT EXISTS ops_account_deployed (
+  account      TEXT NOT NULL,
+  deployed_usd TEXT NOT NULL,       -- µUSD (6dp) integer string
+  block        INTEGER NOT NULL,
+  ts           INTEGER,
+  PRIMARY KEY (account, block)
+);
+CREATE INDEX IF NOT EXISTS ops_account_deployed_account ON ops_account_deployed(account);
+
 -- Governance audit trail: every ProtocolRegistry admin action (fee/cap/whitelist/protocol/asset/route/
 -- factory/base-asset changes). A public on-chain record that admin powers stayed within bounds.
 CREATE TABLE IF NOT EXISTS ops_admin_events (
