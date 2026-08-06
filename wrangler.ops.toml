@@ -71,7 +71,7 @@ FACTORY = "0x81af551F6346AE358966f3BF64d16d6105Ea1e8A"
 DEPLOY_BLOCK = "49169715" # registry/factory deploy block (0x2ee4533) — backfill start
 CONFIRMATIONS = "5"
 RANGE = "3000"
-CORS_ORIGIN = "*" # tighten to the web origin once the app is deployed
+CORS_ORIGIN = "https://piggy.onl" # the live app origin (www 301s here, so this is the only browser origin)
 # WETH + cbBTC held assets → valued via Chainlink ETH/USD + BTC/USD on Base (8dp feeds, verified).
 HELD_ASSETS = '["0x4200000000000000000000000000000000000006","0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf"]'
 # Aave V3 USDC aToken (aBasUSDC) → accurate accruing savings value. Key is "<pool>:<asset>".

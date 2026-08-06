@@ -44,7 +44,7 @@ database_name = "cryptopiggy_market"
 database_id = "d3a2a0c2-7ed2-44de-969f-6fe4255452c0"
 
 [env.production.vars]
-CORS_ORIGIN = "*" # public suggestion-only market data; tighten to the web origin once it's deployed
+CORS_ORIGIN = "https://piggy.onl" # the live app origin (www 301s here, so this is the only browser origin)
 MOCK = "true"
 # WE fund the gas, so /gasless/rpc only sponsors ops that (a) target OUR contracts and (b) are inside the
 # sender's daily quota. Targets allowed: the factory (createAccount), the caller's OWN account — derived
